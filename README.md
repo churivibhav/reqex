@@ -9,7 +9,7 @@ Terminal HTTP client for `.http` / `.rest` files — Postman-like workflow in th
 ## Install
 
 ```bash
-npm install -g reqex
+npm install -g @churivibhav/reqex
 ```
 
 ## Usage
@@ -54,4 +54,4 @@ npm run build
 
 ## License
 
-ISC
+GPL-3.0-or-later
