@@ -54,9 +54,36 @@ test("regionContainsLine", () => {
 });
 
 test("buildRegionDiagnostics uses narrow gutter markers only", () => {
-  const markers = buildRegionDiagnostics(regions, "b");
+  const lines = [
+    "",
+    "GET https://example.com/users",
+    "",
+    "",
+    "POST https://example.com/users",
+  ];
+  const markers = buildRegionDiagnostics(regions, "b", lines);
   assert.ok(markers.length >= 2);
   for (const marker of markers) {
     assert.ok(marker.endColumn - marker.startColumn <= 2);
   }
+});
+
+test("buildRegionDiagnostics places markers after HTTP method", () => {
+  const lines = [
+    "",
+    "GET https://example.com/users",
+    "",
+    "",
+    "POST https://example.com/users",
+  ];
+  const markers = buildRegionDiagnostics(regions, "a", lines);
+  const getMarker = markers.find((marker) => marker.line === 1);
+  assert.ok(getMarker);
+  assert.equal(getMarker.startColumn, 3);
+  assert.equal(getMarker.endColumn, 4);
+
+  const postMarker = markers.find((marker) => marker.line === 4);
+  assert.ok(postMarker);
+  assert.equal(postMarker.startColumn, 4);
+  assert.equal(postMarker.endColumn, 5);
 });

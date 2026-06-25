@@ -34,9 +34,18 @@ export function regionContainsLine(region: RequestRegion, line: number): boolean
   return line >= region.startLine && line <= region.endLine;
 }
 
+const HTTP_METHOD_PREFIX =
+  /^\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE|GRAPHQL)\b/u;
+
+function markerColumnAfterMethod(line: string): number {
+  const match = HTTP_METHOD_PREFIX.exec(line);
+  return match ? match[0].length : 0;
+}
+
 export function buildRegionDiagnostics(
   regions: readonly RequestRegion[],
   activeRegionId: string | null,
+  fileLines: readonly string[],
 ): ReadonlyArray<{
   line: number;
   startColumn: number;
@@ -57,10 +66,12 @@ export function buildRegionDiagnostics(
       continue;
     }
     const isActive = region.id === activeRegionId;
+    const line = fileLines[region.startLine] ?? "";
+    const markerCol = markerColumnAfterMethod(line);
     markers.push({
       line: region.startLine,
-      startColumn: 0,
-      endColumn: 1,
+      startColumn: markerCol,
+      endColumn: markerCol + 1,
       severity: isActive ? "hint" : "info",
       message: `${region.method ?? "REQ"} ${region.name}`,
     });

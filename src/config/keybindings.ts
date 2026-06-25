@@ -33,8 +33,10 @@ const VSCODE_DEFAULTS: Record<string, CommandId> = {
   z: "pane.zoom",
   F1: "help.show",
   "?": "help.show",
+  "ctrl+/": "keybindings.show",
   escape: "overlay.close",
-  "ctrl+c": "app.quit",
+  "ctrl+q": "app.quit",
+  "ctrl+x": "request.cancel",
   "ctrl+shift+c": "response.copy",
   "ctrl+f": "response.search",
   "ctrl+tab": "response.tab.next",
@@ -47,6 +49,95 @@ const VIM_DEFAULTS: Record<string, CommandId> = {
   "ctrl+w l": "pane.focusResponse",
   "ctrl+w k": "pane.focusEditor",
 };
+
+export const COMMAND_LABELS: Record<CommandId, string> = {
+  "request.send": "Send request",
+  "request.cancel": "Cancel request",
+  "pane.focusNext": "Focus next pane",
+  "pane.focusPrev": "Focus previous pane",
+  "pane.focusFiles": "Focus files pane",
+  "pane.focusEditor": "Focus editor pane",
+  "pane.focusResponse": "Focus response pane",
+  "sidebar.toggle": "Toggle sidebar",
+  "file.save": "Save file",
+  "env.switcher": "Environment switcher",
+  "env.selectNext": "Next environment",
+  "env.selectPrev": "Previous environment",
+  "env.apply": "Apply environment",
+  "overlay.close": "Close overlay",
+  "app.quit": "Quit",
+  "palette.commands": "Command palette",
+  "palette.files": "Open file",
+  "help.show": "Help",
+  "keybindings.show": "Show keybindings",
+  "pane.zoom": "Zoom pane",
+  "response.tab.next": "Next response tab",
+  "response.tab.prev": "Previous response tab",
+  "response.copy": "Copy response",
+  "response.search": "Search response",
+  "editor.searchNext": "Find next in editor",
+};
+
+const CHORD_PART_LABELS: Record<string, string> = {
+  ctrl: "Ctrl",
+  shift: "Shift",
+  alt: "Alt",
+  meta: "Meta",
+  escape: "Esc",
+  tab: "Tab",
+  enter: "Enter",
+  space: "Space",
+  backspace: "Backspace",
+  delete: "Delete",
+  up: "Up",
+  down: "Down",
+  left: "Left",
+  right: "Right",
+};
+
+export function formatKeyChord(key: string): string {
+  if (/^F\d+$/u.test(key)) {
+    return key;
+  }
+  if (key.length === 1) {
+    return key === "?" ? "?" : key.toUpperCase();
+  }
+
+  return key
+    .split("+")
+    .map((part) => CHORD_PART_LABELS[part] ?? part.toUpperCase())
+    .join("+");
+}
+
+export function buildKeybindingsViewLines(
+  bindings: Record<string, CommandId>,
+  maxLines?: number,
+): string[] {
+  const byCommand = new Map<CommandId, string[]>();
+  for (const [key, command] of Object.entries(bindings)) {
+    const keys = byCommand.get(command) ?? [];
+    keys.push(key);
+    byCommand.set(command, keys);
+  }
+
+  const rows = [...byCommand.entries()]
+    .map(([command, keys]) => {
+      const formattedKeys = keys
+        .sort((a, b) => a.localeCompare(b))
+        .map(formatKeyChord)
+        .join(" / ");
+      const label = COMMAND_LABELS[command] ?? command;
+      return { label, row: `${formattedKeys.padEnd(28)}  ${label}` };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((entry) => entry.row);
+
+  if (maxLines !== undefined && rows.length > maxLines) {
+    const hidden = rows.length - maxLines + 1;
+    return [...rows.slice(0, maxLines - 1), `… ${hidden} more`];
+  }
+  return rows;
+}
 
 export function getConfigDir(): string {
   if (process.env.REQEX_CONFIG_DIR) {
@@ -122,24 +213,11 @@ export function watchKeybindings(
   };
 }
 
-export function describeBindings(bindings: Record<string, CommandId>): string[] {
-  const preferred: Array<[string, CommandId]> = [
-    ["F5", "request.send"],
-    ["tab", "pane.focusNext"],
-    ["ctrl+s", "file.save"],
-    ["ctrl+e", "env.switcher"],
-    ["ctrl+shift+p", "palette.commands"],
-    ["F1", "help.show"],
-  ];
-  return preferred
-    .filter(([key]) => bindings[key])
-    .map(([key, command]) => `${key} ${command.replace("request.", "").replace("pane.", "")}`);
-}
-
 export type FooterHintContext = Readonly<{
   focusPane: "files" | "editor" | "response";
-  overlay: "none" | "env" | "help" | "commandPalette" | "filePicker";
+  overlay: "none" | "env" | "help" | "commandPalette" | "filePicker" | "keybindings";
   viewportWidth: number;
+  sending?: boolean;
 }>;
 
 const FOOTER_HINTS: Record<string, readonly string[]> = {
@@ -147,13 +225,18 @@ const FOOTER_HINTS: Record<string, readonly string[]> = {
   response: ["Tab Panes", "Ctrl+Shift+C Copy", "F5 Send", "F2 Palette"],
   files: ["Enter Open", "Tab Panes", "Ctrl+P Files", "F2 Palette"],
   overlay: ["↑↓ Navigate", "Enter Select", "Esc Close"],
+  sending: ["Ctrl+X Cancel", "Tab Panes", "Ctrl+Q Quit"],
 };
 
 export function footerHints(context: FooterHintContext): string {
-  const hints =
-    context.overlay !== "none"
-      ? FOOTER_HINTS.overlay!
-      : FOOTER_HINTS[context.focusPane] ?? FOOTER_HINTS.editor!;
+  let hints: readonly string[];
+  if (context.overlay !== "none") {
+    hints = FOOTER_HINTS.overlay!;
+  } else if (context.sending) {
+    hints = FOOTER_HINTS.sending!;
+  } else {
+    hints = FOOTER_HINTS[context.focusPane] ?? FOOTER_HINTS.editor!;
+  }
 
   const leftBudget = 48;
   const maxWidth = Math.max(20, context.viewportWidth - leftBudget);
@@ -171,5 +254,6 @@ export const HELP_HINT_LINES: readonly string[] = [
   "Ctrl+E Environment switcher",
   "F2 / Ctrl+Shift+P Command palette",
   "Ctrl+Shift+C Copy response tab",
-  "F1 Help · F11 Zoom · Ctrl+C twice Quit",
+  "Ctrl+X Cancel request · Ctrl+Q Quit",
+  "Ctrl+/ Full keybindings · F1 Quick help",
 ];

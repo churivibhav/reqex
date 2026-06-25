@@ -25,14 +25,16 @@ reqex ./api           # open folder
 |-----|--------|
 | `F5` | Send request under cursor |
 | `Ctrl+Enter` / `Alt+Enter` | Send (Kitty keyboard protocol) |
+| `Ctrl+X` | Cancel in-flight request |
 | `Tab` / `Shift+Tab` | Cycle panes |
 | `Ctrl+1/2/3` | Jump to Files / Editor / Response |
 | `Ctrl+S` | Save file |
 | `Ctrl+E` | Environment switcher |
 | `Ctrl+Shift+P` / `F2` | Command palette |
-| `F1` / `?` | Help |
+| `F1` / `?` | Quick help |
+| `Ctrl+/` | Full keybindings list |
 | `F11` / `z` | Zoom pane |
-| `Ctrl+C` twice | Quit |
+| `Ctrl+Q` | Quit |
 
 Configurable bindings: `~/.config/reqex/keybindings.json` (or `%APPDATA%\\reqex` on Windows). Project overrides in `.reqex/keybindings.json`. Set `REQEX_CONFIG_DIR` to override the config root.
 

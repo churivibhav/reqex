@@ -21,6 +21,7 @@ import {
   type CommandId,
   type FocusPane,
 } from "./types.js";
+import { createSendController } from "./send-controller.js";
 
 export function createCommandContext(deps: {
   workspace: Workspace;
@@ -50,6 +51,7 @@ export function createCommandContext(deps: {
   });
 
   const promptResolvers: Array<(value: string | boolean | undefined) => void> = [];
+  const sendController = createSendController();
 
   const resolvePrompt = (value: string | boolean | undefined) => {
     const resolver = promptResolvers.pop();
@@ -148,14 +150,23 @@ export function createCommandContext(deps: {
       return;
     }
 
+    const gen = sendController.beginSend();
+
     deps.update((s) => ({
       ...s,
       activeRegion: region,
       request: { ...s.request, sending: true, error: null, result: null },
-      responseEditor: { scrollTop: 0, scrollLeft: 0 },
+      responseEditor: {
+        scrollTop: 0,
+        scrollLeft: 0,
+        cursor: { line: 0, column: 0 },
+        selection: null,
+      },
       resultGeneration: s.resultGeneration + 1,
-      ui: { ...s.ui, focusPane: "response" },
+      ui: { ...s.ui, focusPane: "response", responseTab: "pretty" },
     }));
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     const result = await sendRegion({
       filePath: state.selectedFilePath,
@@ -165,9 +176,17 @@ export function createCommandContext(deps: {
       variables: state.request.variables,
     });
 
+    if (!sendController.isCurrent(gen)) {
+      return;
+    }
+
     const variables = await listVariables(state.selectedFilePath, [
       ...deps.getState().request.activeEnvironment,
     ]);
+
+    if (!sendController.isCurrent(gen)) {
+      return;
+    }
 
     deps.update((s) => ({
       ...s,
@@ -194,6 +213,22 @@ export function createCommandContext(deps: {
     switch (command) {
       case "request.send":
         void runSend();
+        break;
+      case "request.cancel":
+        if (!state.request.sending) {
+          break;
+        }
+        sendController.cancelSend();
+        deps.update((s) => ({
+          ...s,
+          request: {
+            ...s.request,
+            sending: false,
+            error: "Request cancelled",
+            result: null,
+          },
+          ui: { ...s.ui, statusMessage: "Request cancelled" },
+        }));
         break;
       case "pane.focusNext":
         focusPane(nextPane(state.ui.focusPane));
@@ -285,14 +320,7 @@ export function createCommandContext(deps: {
         resolvePrompt(undefined);
         break;
       case "app.quit":
-        if (state.ui.quitConfirmPending) {
-          deps.quit();
-        } else {
-          deps.update((s) => ({
-            ...s,
-            ui: { ...s.ui, quitConfirmPending: true, statusMessage: "Ctrl+C again to quit" },
-          }));
-        }
+        deps.quit();
         break;
       case "palette.commands":
         deps.update((s) => ({
@@ -316,6 +344,15 @@ export function createCommandContext(deps: {
         deps.update((s) => ({
           ...s,
           ui: { ...s.ui, overlay: s.ui.overlay === "help" ? "none" : "help" },
+        }));
+        break;
+      case "keybindings.show":
+        deps.update((s) => ({
+          ...s,
+          ui: {
+            ...s.ui,
+            overlay: s.ui.overlay === "keybindings" ? "none" : "keybindings",
+          },
         }));
         break;
       case "pane.zoom":

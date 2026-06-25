@@ -130,6 +130,7 @@ async function main(): Promise<void> {
             fileLines: [...lines],
             dirty: contentFromLines(lines) !== prev.fileContent,
             activeRegion,
+            ui: { ...prev.ui, focusPane: "editor" },
             editor: { ...prev.editor, cursor },
           };
         });
@@ -143,7 +144,12 @@ async function main(): Promise<void> {
           return {
             ...prev,
             activeRegion,
-            editor: { ...prev.editor, selection },
+            ui: { ...prev.ui, focusPane: "editor" },
+            editor: {
+              ...prev.editor,
+              selection,
+              cursor: selection?.active ?? prev.editor.cursor,
+            },
           };
         });
       },
@@ -175,13 +181,37 @@ async function main(): Promise<void> {
         app?.update((prev) => ({
           ...prev,
           ui: { ...prev.ui, responseTab: tab },
-          responseEditor: { scrollTop: 0, scrollLeft: 0 },
+          responseEditor: {
+            ...prev.responseEditor,
+            scrollTop: 0,
+            scrollLeft: 0,
+            cursor: { line: 0, column: 0 },
+            selection: null,
+          },
         }));
       },
       onResponseScroll: (scrollTop, scrollLeft) => {
         app?.update((prev) => ({
           ...prev,
-          responseEditor: { scrollTop, scrollLeft },
+          responseEditor: { ...prev.responseEditor, scrollTop, scrollLeft },
+        }));
+      },
+      onResponseSelection: (selection) => {
+        app?.update((prev) => ({
+          ...prev,
+          ui: { ...prev.ui, focusPane: "response" },
+          responseEditor: {
+            ...prev.responseEditor,
+            selection,
+            cursor: selection?.active ?? prev.responseEditor.cursor,
+          },
+        }));
+      },
+      onResponseChange: (cursor) => {
+        app?.update((prev) => ({
+          ...prev,
+          ui: { ...prev.ui, focusPane: "response" },
+          responseEditor: { ...prev.responseEditor, cursor },
         }));
       },
       onSplitChange: (sizes) => {

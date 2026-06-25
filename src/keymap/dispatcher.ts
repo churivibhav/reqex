@@ -20,10 +20,12 @@ export function buildBindingMap<S extends AppState>(
 export function commandFromPaletteId(id: string): CommandId | null {
   const known: Record<string, CommandId> = {
     "request.send": "request.send",
+    "request.cancel": "request.cancel",
     "file.save": "file.save",
     "env.switcher": "env.switcher",
     "palette.commands": "palette.commands",
     "help.show": "help.show",
+    "keybindings.show": "keybindings.show",
     "pane.zoom": "pane.zoom",
     "sidebar.toggle": "sidebar.toggle",
   };
@@ -37,9 +39,11 @@ export const COMMAND_ITEMS: ReadonlyArray<{
   shortcut?: string;
 }> = [
   { id: "request.send", label: "Send Request", description: "Send request under cursor", shortcut: "F5" },
+  { id: "request.cancel", label: "Cancel Request", description: "Cancel in-flight request", shortcut: "Ctrl+X" },
   { id: "file.save", label: "Save File", description: "Write editor to disk", shortcut: "Ctrl+S" },
   { id: "env.switcher", label: "Switch Environment", description: "Choose active environment", shortcut: "Ctrl+E" },
   { id: "sidebar.toggle", label: "Toggle Sidebar", description: "Show/hide file tree", shortcut: "Ctrl+B" },
   { id: "pane.zoom", label: "Zoom Pane", description: "Zoom focused pane", shortcut: "F11" },
-  { id: "help.show", label: "Help", description: "Show keybinding help", shortcut: "F1" },
+  { id: "help.show", label: "Help", description: "Show quick help", shortcut: "F1" },
+  { id: "keybindings.show", label: "Keybindings", description: "Show all keybindings", shortcut: "Ctrl+/" },
 ];

@@ -9,9 +9,9 @@ import {
 } from "@rezi-ui/core";
 
 import { buildRegionDiagnostics, resolveRegionAtLine } from "../engine/index.js";
-import { footerHints, HELP_HINT_LINES } from "../config/keybindings.js";
+import { buildKeybindingsViewLines, footerHints, HELP_HINT_LINES } from "../config/keybindings.js";
 import { COMMAND_ITEMS } from "../keymap/index.js";
-import type { AppState, FocusPane } from "../state/types.js";
+import type { AppState, CommandId, FocusPane } from "../state/types.js";
 import { contentFromLines, resolveLayoutMode } from "../state/types.js";
 import type { WorkspaceFileNode } from "../workspace/types.js";
 import { methodColor, prettyJsonIfPossible, statusTone, tokenizeHttpLine } from "../utils/http-syntax.js";
@@ -25,6 +25,8 @@ export type ViewDeps = Readonly<{
   onTreePress: (node: WorkspaceFileNode) => void;
   onResponseTab: (tab: AppState["ui"]["responseTab"]) => void;
   onResponseScroll: (scrollTop: number, scrollLeft: number) => void;
+  onResponseSelection: (selection: EditorSelection | null) => void;
+  onResponseChange: (cursor: CursorPosition) => void;
   onSplitChange: (sizes: readonly number[]) => void;
   onCommandPaletteChange: (query: string) => void;
   onCommandPaletteSelect: (id: string) => void;
@@ -89,7 +91,11 @@ function renderEditor(state: AppState, deps: ViewDeps, readOnly: boolean): VNode
   ];
 
   const diagnostics = state.parsedFile
-    ? buildRegionDiagnostics(state.parsedFile.regions, activeRegion?.id ?? null)
+    ? buildRegionDiagnostics(
+        state.parsedFile.regions,
+        activeRegion?.id ?? null,
+        state.fileLines,
+      )
     : [];
 
   return ui.panel(
@@ -129,12 +135,25 @@ function responseScrollProps(state: AppState, deps: ViewDeps) {
   };
 }
 
+function responseCursorProps(state: AppState, deps: ViewDeps) {
+  return {
+    cursor: state.responseEditor.cursor,
+    selection: state.responseEditor.selection,
+    onChange: (_lines: readonly string[], cursor: CursorPosition) => {
+      deps.onResponseChange(cursor);
+    },
+    onSelectionChange: deps.onResponseSelection,
+  };
+}
+
 function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
   const result = state.request.result;
   const scroll = responseScrollProps(state, deps);
+  const cursor = responseCursorProps(state, deps);
+  const gen = state.resultGeneration;
 
   if (state.request.sending) {
-    return ui.center(ui.spinner({ label: "Sending request..." }));
+    return ui.center(ui.spinner({ label: "Waiting for response…" }));
   }
   if (state.request.error && !result) {
     return ui.errorDisplay(state.request.error);
@@ -148,7 +167,7 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
   switch (state.ui.responseTab) {
     case "headers":
       return ui.table({
-        id: "response-headers",
+        id: `response-headers-${gen}`,
         columns: [
           { key: "name", header: "Header", width: 24 },
           { key: "value", header: "Value", flex: 1 },
@@ -160,28 +179,22 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
       });
     case "raw":
       return ui.codeEditor({
-        id: "response-raw",
+        id: `response-raw-${gen}`,
         lines: result.body ? result.body.split("\n") : [""],
-        cursor: { line: 0, column: 0 },
-        selection: null,
         readOnly: true,
         lineNumbers: true,
         syntaxLanguage: "plain",
-        onChange: () => {},
-        onSelectionChange: () => {},
+        ...cursor,
         ...scroll,
         flex: 1,
       });
     case "variables":
       return ui.codeEditor({
-        id: "response-vars",
+        id: `response-vars-${gen}`,
         lines: [JSON.stringify(state.request.variables, null, 2)],
-        cursor: { line: 0, column: 0 },
-        selection: null,
         readOnly: true,
         syntaxLanguage: "json",
-        onChange: () => {},
-        onSelectionChange: () => {},
+        ...cursor,
         ...scroll,
         flex: 1,
       });
@@ -203,16 +216,13 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
     case "pretty":
     default:
       return ui.codeEditor({
-        id: "response-pretty",
+        id: `response-pretty-${gen}`,
         lines: prettyJsonIfPossible(result.prettyBody || result.body).split("\n"),
-        cursor: { line: 0, column: 0 },
-        selection: null,
         readOnly: true,
         lineNumbers: true,
         syntaxLanguage: "json",
         searchQuery: state.editor.searchQuery || undefined,
-        onChange: () => {},
-        onSelectionChange: () => {},
+        ...cursor,
         ...scroll,
         flex: 1,
       });
@@ -221,11 +231,10 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
 
 function renderResponse(state: AppState, deps: ViewDeps): VNode {
   const result = state.request.result;
-  const statusLine = result
-    ? `${result.protocol ?? "HTTP"} ${result.statusCode ?? "?"} ${result.statusMessage ?? ""} · ${result.durationMs ?? "?"} ms`
-    : state.request.sending
-      ? "Sending..."
-      : "Ready";
+  const statusLine =
+    state.request.sending || !result
+      ? null
+      : `${result.protocol ?? "HTTP"} ${result.statusCode ?? "?"} ${result.statusMessage ?? ""} · ${result.durationMs ?? "?"} ms`;
 
   const tabItems = [
     { key: "pretty", label: "Pretty" },
@@ -243,16 +252,21 @@ function renderResponse(state: AppState, deps: ViewDeps): VNode {
     },
     [
       ui.row({ gap: 2 }, [
-        ui.text(statusLine, {
-          style: { fg: rgb(...statusColor(result?.statusCode)), bold: true },
-        }),
-        result?.error ? ui.badge(result.error, { variant: "error" }) : null,
+        state.request.sending
+          ? ui.spinner({ label: "Sending request…" })
+          : ui.text(statusLine ?? "Ready", {
+              style: { fg: rgb(...statusColor(result?.statusCode)), bold: true },
+            }),
+        result?.error && !state.request.sending
+          ? ui.badge(result.error, { variant: "error" })
+          : null,
       ]),
       ui.row({ gap: 1 }, [
         ...tabItems.map((tab) =>
           ui.button({
             id: `tab-${tab.key}`,
             label: tab.label,
+            disabled: state.request.sending,
             onPress: () => deps.onResponseTab(tab.key),
           }),
         ),
@@ -341,6 +355,7 @@ function renderFooter(state: AppState): VNode {
     focusPane: state.ui.focusPane,
     overlay: state.ui.overlay,
     viewportWidth: state.ui.viewportWidth,
+    sending: state.request.sending,
   });
 
   return ui.statusBar({
@@ -393,6 +408,21 @@ function renderOverlayContent(state: AppState, deps: ViewDeps): VNode {
         width: 70,
         height: 14,
       });
+    case "keybindings": {
+      const maxLines = Math.max(8, Math.min(26, state.ui.viewportHeight - 8));
+      const lines = buildKeybindingsViewLines(
+        state.settings.keybindings as Record<string, CommandId>,
+        maxLines,
+      );
+      return ui.modal({
+        id: "keybindings-modal",
+        title: "Keybindings",
+        content: ui.column({ gap: 0 }, lines.map((line) => ui.text(line))),
+        onClose: deps.onOverlayClose,
+        width: 72,
+        height: Math.min(maxLines + 4, 28),
+      });
+    }
     case "commandPalette":
       return ui.center(
         ui.commandPalette({

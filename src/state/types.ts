@@ -5,7 +5,7 @@ import type { WorkspaceFileNode } from "../workspace/types.js";
 
 export type FocusPane = "files" | "editor" | "response";
 export type ResponseTab = "pretty" | "raw" | "headers" | "variables" | "tests";
-export type OverlayKind = "none" | "env" | "help" | "commandPalette" | "filePicker";
+export type OverlayKind = "none" | "env" | "help" | "keybindings" | "commandPalette" | "filePicker";
 export type LayoutMode = "three-pane" | "sidebar-overlay" | "stacked";
 
 export type AppState = Readonly<{
@@ -22,6 +22,8 @@ export type AppState = Readonly<{
   responseEditor: Readonly<{
     scrollTop: number;
     scrollLeft: number;
+    cursor: CursorPosition;
+    selection: EditorSelection | null;
   }>;
   resultGeneration: number;
   editor: Readonly<{
@@ -63,7 +65,6 @@ export type AppState = Readonly<{
       masked?: boolean;
     }> | null;
     statusMessage: string | null;
-    quitConfirmPending: boolean;
     gitBranch: string | null;
   }>;
   settings: Readonly<{
@@ -85,6 +86,7 @@ export type CommandContext = Readonly<{
 
 export type CommandId =
   | "request.send"
+  | "request.cancel"
   | "pane.focusNext"
   | "pane.focusPrev"
   | "pane.focusFiles"
@@ -101,6 +103,7 @@ export type CommandId =
   | "palette.commands"
   | "palette.files"
   | "help.show"
+  | "keybindings.show"
   | "pane.zoom"
   | "response.tab.next"
   | "response.tab.prev"
@@ -129,7 +132,12 @@ export function createInitialState(workspaceRoot: string): AppState {
     parseVersion: 0,
     parsedFile: null,
     activeRegion: null,
-    responseEditor: { scrollTop: 0, scrollLeft: 0 },
+    responseEditor: {
+      scrollTop: 0,
+      scrollLeft: 0,
+      cursor: { line: 0, column: 0 },
+      selection: null,
+    },
     resultGeneration: 0,
     editor: {
       cursor: { line: 0, column: 0 },
@@ -160,7 +168,6 @@ export function createInitialState(workspaceRoot: string): AppState {
       commandPalette: { open: false, query: "", selectedIndex: 0 },
       pendingPrompt: null,
       statusMessage: null,
-      quitConfirmPending: false,
       gitBranch: null,
     },
     settings: {
