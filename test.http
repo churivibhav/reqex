@@ -1,0 +1,141 @@
+# Star Wars API (SWAPI Reborn)
+# https://swapi.info/
+#
+# Run all requests:
+#   npx httpyac send test.http --all
+
+@baseUrl = https://swapi.info/api
+@filmId = 1
+@personId = 1
+@planetId = 1
+@speciesId = 1
+@vehicleId = 4
+@starshipId = 9
+
+### API root — list resource endpoints
+GET {{baseUrl}}
+Accept: application/json
+
+?? status == 200
+?? header content-type includes json
+?? body includes films
+?? body includes people
+?? body includes planets
+
+### Films — list all
+# @name films
+GET {{baseUrl}}/films
+Accept: application/json
+
+?? status == 200
+?? header content-type includes json
+?? js response.parsedBody.length == 6
+
+### Films — get by id
+# @name film
+GET {{baseUrl}}/films/{{filmId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.title == A New Hope
+?? js response.parsedBody.episode_id == 4
+?? js response.parsedBody.director == George Lucas
+
+### People — list all
+# @name people
+GET {{baseUrl}}/people
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.length > 0
+
+### People — get by id
+# @name person
+GET {{baseUrl}}/people/{{personId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Luke Skywalker
+?? js response.parsedBody.height == 172
+
+### Planets — list all
+GET {{baseUrl}}/planets
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.length == 60
+
+### Planets — get by id
+# @name planet
+GET {{baseUrl}}/planets/{{planetId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Tatooine
+?? js response.parsedBody.climate == arid
+
+### Species — list all
+GET {{baseUrl}}/species
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.length == 37
+
+### Species — get by id
+GET {{baseUrl}}/species/{{speciesId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Human
+
+### Vehicles — list all
+GET {{baseUrl}}/vehicles
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.length == 39
+
+### Vehicles — get by id
+GET {{baseUrl}}/vehicles/{{vehicleId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Sand Crawler
+
+### Starships — list all
+GET {{baseUrl}}/starships
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.length == 36
+
+### Starships — get by id
+GET {{baseUrl}}/starships/{{starshipId}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Death Star
+
+### Chain — film character from nested URL
+# @ref film
+GET {{film.characters[0]}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Luke Skywalker
+
+### Chain — person homeworld from nested URL
+# @ref person
+GET {{person.homeworld}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == Tatooine
+
+### Chain — film starship from nested URL
+# @ref film
+GET {{film.starships[0]}}
+Accept: application/json
+
+?? status == 200
+?? js response.parsedBody.name == CR90 corvette

@@ -1,0 +1,11 @@
+### Get users
+GET https://example.com/users
+
+### Create user
+POST https://example.com/users
+Content-Type: application/json
+
+{"name": "test"}
+
+### Health
+GET https://example.com/health
