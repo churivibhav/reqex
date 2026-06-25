@@ -119,18 +119,30 @@ npm install -g @churivibhav/reqex
 
 The CLI command remains `reqex`.
 
-### One-time setup
+### One-time setup (npm trusted publisher)
 
-Do this once per machine/account:
+Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) (OIDC) — no long-lived `NPM_TOKEN` in GitHub Secrets.
 
-1. Log in at [npmjs.com](https://www.npmjs.com/) as **churivibhav**.
-2. Enable **two-factor authentication** (required to publish).
-3. Create an **Automation** access token: Account → Access Tokens → Generate New Token → Automation.
-4. In GitHub repo **Settings → Secrets and variables → Actions**, add:
-   - Name: `NPM_TOKEN`
-   - Value: the automation token from step 3
+Configure once on [npmjs.com](https://www.npmjs.com/) for **`@churivibhav/reqex`**:
 
-The publish workflow uses this secret; do not commit tokens to the repo.
+1. Log in as **churivibhav** and enable **two-factor authentication**.
+2. Open the package → **Settings** → **Trusted Publisher** → **GitHub Actions**.
+3. Set:
+   - **Organization or user**: `churivibhav`
+   - **Repository**: `reqex`
+   - **Workflow filename**: `publish.yml` (exact filename, including `.yml`)
+   - **Environment** (optional): leave blank unless you add a GitHub Environment and match it here
+4. Save. npm does not validate these fields until the first publish — double-check spelling and case.
+
+The workflow [`.github/workflows/publish.yml`](.github/workflows/publish.yml) must:
+
+- Run on **GitHub-hosted** runners (`ubuntu-latest`)
+- Set `permissions.id-token: write` (for OIDC)
+- **Not** set `NODE_AUTH_TOKEN` on the publish step (that would bypass OIDC)
+
+Requires **Node.js 24+** in the publish job (npm CLI ≥ 11.5.1). Provenance attestations are generated automatically when publishing via trusted publishing.
+
+Optional hardening after the first successful OIDC publish: package **Settings → Publishing access → Require two-factor authentication and disallow tokens**.
 
 ### Release checklist
 
@@ -153,7 +165,7 @@ The workflow will:
 
 - Verify tag `vX.Y.Z` matches `package.json` `X.Y.Z`
 - Run tests and build
-- Run `npm publish --provenance --access public`
+- Authenticate via OIDC and run `npm publish --access public`
 
 ### Verify a release
 
@@ -180,7 +192,8 @@ npm publish --access public
 | Problem | What to check |
 |---------|----------------|
 | Publish workflow fails on version mismatch | Tag must be exactly `v` + `package.json` version (e.g. tag `v0.1.0` ↔ `"version": "0.1.0"`) |
-| `npm publish` 403 / OTP required | Use an **Automation** token in `NPM_TOKEN`, not a publish token that needs 2FA interactively |
+| `npm publish` ENEEDAUTH / Unable to authenticate | Trusted publisher fields must match exactly: owner `churivibhav`, repo `reqex`, workflow `publish.yml`; workflow needs `id-token: write`; use GitHub-hosted runners only |
+| Publish uses token auth instead of OIDC | Do not set `NODE_AUTH_TOKEN` on the publish step; remove any leftover `NPM_TOKEN` secret if you added one earlier |
 | Scoped package installs as private | `publishConfig.access` must be `"public"` (already set) |
 | Rezi / TUI errors on Alpine | Unsupported platform; use glibc Linux, macOS, or Windows |
 | `dist/` missing locally | Run `npm run build`; `dist/` is gitignored and built in CI before publish |
