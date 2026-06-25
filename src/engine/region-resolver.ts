@@ -41,14 +41,14 @@ export function buildRegionDiagnostics(
   line: number;
   startColumn: number;
   endColumn: number;
-  severity: "info";
+  severity: "info" | "hint";
   message?: string;
 }> {
   const markers: Array<{
     line: number;
     startColumn: number;
     endColumn: number;
-    severity: "info";
+    severity: "info" | "hint";
     message?: string;
   }> = [];
 
@@ -56,23 +56,14 @@ export function buildRegionDiagnostics(
     if (!region.hasRequest || region.isGlobal) {
       continue;
     }
+    const isActive = region.id === activeRegionId;
     markers.push({
       line: region.startLine,
       startColumn: 0,
       endColumn: 1,
-      severity: "info",
+      severity: isActive ? "hint" : "info",
       message: `${region.method ?? "REQ"} ${region.name}`,
     });
-    if (region.id === activeRegionId) {
-      for (let line = region.startLine; line <= region.endLine; line++) {
-        markers.push({
-          line,
-          startColumn: 0,
-          endColumn: 200,
-          severity: "info",
-        });
-      }
-    }
   }
 
   return markers;

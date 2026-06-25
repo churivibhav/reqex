@@ -19,6 +19,11 @@ export type AppState = Readonly<{
   parseVersion: number;
   parsedFile: ParsedFile | null;
   activeRegion: RequestRegion | null;
+  responseEditor: Readonly<{
+    scrollTop: number;
+    scrollLeft: number;
+  }>;
+  resultGeneration: number;
   editor: Readonly<{
     cursor: CursorPosition;
     selection: EditorSelection | null;
@@ -59,6 +64,7 @@ export type AppState = Readonly<{
     }> | null;
     statusMessage: string | null;
     quitConfirmPending: boolean;
+    gitBranch: string | null;
   }>;
   settings: Readonly<{
     keymapPreset: "vscode" | "vim";
@@ -123,6 +129,8 @@ export function createInitialState(workspaceRoot: string): AppState {
     parseVersion: 0,
     parsedFile: null,
     activeRegion: null,
+    responseEditor: { scrollTop: 0, scrollLeft: 0 },
+    resultGeneration: 0,
     editor: {
       cursor: { line: 0, column: 0 },
       selection: null,
@@ -153,6 +161,7 @@ export function createInitialState(workspaceRoot: string): AppState {
       pendingPrompt: null,
       statusMessage: null,
       quitConfirmPending: false,
+      gitBranch: null,
     },
     settings: {
       keymapPreset: "vscode",

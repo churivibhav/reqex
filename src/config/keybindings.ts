@@ -135,3 +135,41 @@ export function describeBindings(bindings: Record<string, CommandId>): string[] 
     .filter(([key]) => bindings[key])
     .map(([key, command]) => `${key} ${command.replace("request.", "").replace("pane.", "")}`);
 }
+
+export type FooterHintContext = Readonly<{
+  focusPane: "files" | "editor" | "response";
+  overlay: "none" | "env" | "help" | "commandPalette" | "filePicker";
+  viewportWidth: number;
+}>;
+
+const FOOTER_HINTS: Record<string, readonly string[]> = {
+  editor: ["F5 Send", "Ctrl+S Save", "Tab Panes", "F2 Palette"],
+  response: ["Tab Panes", "Ctrl+Shift+C Copy", "F5 Send", "F2 Palette"],
+  files: ["Enter Open", "Tab Panes", "Ctrl+P Files", "F2 Palette"],
+  overlay: ["↑↓ Navigate", "Enter Select", "Esc Close"],
+};
+
+export function footerHints(context: FooterHintContext): string {
+  const hints =
+    context.overlay !== "none"
+      ? FOOTER_HINTS.overlay!
+      : FOOTER_HINTS[context.focusPane] ?? FOOTER_HINTS.editor!;
+
+  const leftBudget = 48;
+  const maxWidth = Math.max(20, context.viewportWidth - leftBudget);
+  let text = hints.join(" · ");
+  if (text.length > maxWidth) {
+    text = `${text.slice(0, maxWidth - 1)}…`;
+  }
+  return text;
+}
+
+export const HELP_HINT_LINES: readonly string[] = [
+  "F5 Send request under cursor",
+  "Tab / Shift+Tab Cycle panes",
+  "Ctrl+S Save file",
+  "Ctrl+E Environment switcher",
+  "F2 / Ctrl+Shift+P Command palette",
+  "Ctrl+Shift+C Copy response tab",
+  "F1 Help · F11 Zoom · Ctrl+C twice Quit",
+];

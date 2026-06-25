@@ -138,9 +138,7 @@ export function createCommandContext(deps: {
       return;
     }
 
-    const region =
-      state.activeRegion ??
-      resolveRegionAtLine(state.parsedFile.regions, state.editor.cursor.line);
+    const region = resolveRegionAtLine(state.parsedFile.regions, state.editor.cursor.line);
     if (!region) {
       deps.update((s) => ({
         ...s,
@@ -153,7 +151,9 @@ export function createCommandContext(deps: {
     deps.update((s) => ({
       ...s,
       activeRegion: region,
-      request: { ...s.request, sending: true, error: null },
+      request: { ...s.request, sending: true, error: null, result: null },
+      responseEditor: { scrollTop: 0, scrollLeft: 0 },
+      resultGeneration: s.resultGeneration + 1,
       ui: { ...s.ui, focusPane: "response" },
     }));
 

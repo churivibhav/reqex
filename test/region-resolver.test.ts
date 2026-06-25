@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { regionContainsLine, resolveRegionAtLine } from "../src/engine/region-resolver.js";
+import {
+  buildRegionDiagnostics,
+  regionContainsLine,
+  resolveRegionAtLine,
+} from "../src/engine/region-resolver.js";
 import type { RequestRegion } from "../src/engine/types.js";
 
 const regions: RequestRegion[] = [
@@ -47,4 +51,12 @@ test("resolveRegionAtLine returns innermost region", () => {
 test("regionContainsLine", () => {
   assert.equal(regionContainsLine(regions[1]!, 5), true);
   assert.equal(regionContainsLine(regions[1]!, 10), false);
+});
+
+test("buildRegionDiagnostics uses narrow gutter markers only", () => {
+  const markers = buildRegionDiagnostics(regions, "b");
+  assert.ok(markers.length >= 2);
+  for (const marker of markers) {
+    assert.ok(marker.endColumn - marker.startColumn <= 2);
+  }
 });

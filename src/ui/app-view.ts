@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import {
   rgb,
   ui,
@@ -7,12 +9,12 @@ import {
 } from "@rezi-ui/core";
 
 import { buildRegionDiagnostics, resolveRegionAtLine } from "../engine/index.js";
+import { footerHints, HELP_HINT_LINES } from "../config/keybindings.js";
+import { COMMAND_ITEMS } from "../keymap/index.js";
 import type { AppState, FocusPane } from "../state/types.js";
 import { contentFromLines, resolveLayoutMode } from "../state/types.js";
 import type { WorkspaceFileNode } from "../workspace/types.js";
 import { methodColor, prettyJsonIfPossible, statusTone, tokenizeHttpLine } from "../utils/http-syntax.js";
-import { COMMAND_ITEMS } from "../keymap/index.js";
-import { describeBindings } from "../config/keybindings.js";
 
 export type ViewDeps = Readonly<{
   onEditorChange: (lines: readonly string[], cursor: CursorPosition) => void;
@@ -22,9 +24,12 @@ export type ViewDeps = Readonly<{
   onTreeToggle: (node: WorkspaceFileNode, expanded: boolean) => void;
   onTreePress: (node: WorkspaceFileNode) => void;
   onResponseTab: (tab: AppState["ui"]["responseTab"]) => void;
+  onResponseScroll: (scrollTop: number, scrollLeft: number) => void;
   onSplitChange: (sizes: readonly number[]) => void;
   onCommandPaletteChange: (query: string) => void;
   onCommandPaletteSelect: (id: string) => void;
+  onCommandPaletteSelectionChange: (index: number) => void;
+  onOverlayClose: () => void;
   onEnvSelect: (index: number) => void;
   onResponseSearch: (query: string) => void;
 }>;
@@ -116,8 +121,18 @@ function renderEditor(state: AppState, deps: ViewDeps, readOnly: boolean): VNode
   );
 }
 
-function renderResponseBody(state: AppState): VNode {
+function responseScrollProps(state: AppState, deps: ViewDeps) {
+  return {
+    scrollTop: state.responseEditor.scrollTop,
+    scrollLeft: state.responseEditor.scrollLeft,
+    onScroll: deps.onResponseScroll,
+  };
+}
+
+function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
   const result = state.request.result;
+  const scroll = responseScrollProps(state, deps);
+
   if (state.request.sending) {
     return ui.center(ui.spinner({ label: "Sending request..." }));
   }
@@ -149,14 +164,12 @@ function renderResponseBody(state: AppState): VNode {
         lines: result.body ? result.body.split("\n") : [""],
         cursor: { line: 0, column: 0 },
         selection: null,
-        scrollTop: 0,
-        scrollLeft: 0,
         readOnly: true,
         lineNumbers: true,
         syntaxLanguage: "plain",
         onChange: () => {},
         onSelectionChange: () => {},
-        onScroll: () => {},
+        ...scroll,
         flex: 1,
       });
     case "variables":
@@ -165,13 +178,11 @@ function renderResponseBody(state: AppState): VNode {
         lines: [JSON.stringify(state.request.variables, null, 2)],
         cursor: { line: 0, column: 0 },
         selection: null,
-        scrollTop: 0,
-        scrollLeft: 0,
         readOnly: true,
         syntaxLanguage: "json",
         onChange: () => {},
         onSelectionChange: () => {},
-        onScroll: () => {},
+        ...scroll,
         flex: 1,
       });
     case "tests":
@@ -196,15 +207,13 @@ function renderResponseBody(state: AppState): VNode {
         lines: prettyJsonIfPossible(result.prettyBody || result.body).split("\n"),
         cursor: { line: 0, column: 0 },
         selection: null,
-        scrollTop: 0,
-        scrollLeft: 0,
         readOnly: true,
         lineNumbers: true,
         syntaxLanguage: "json",
         searchQuery: state.editor.searchQuery || undefined,
         onChange: () => {},
         onSelectionChange: () => {},
-        onScroll: () => {},
+        ...scroll,
         flex: 1,
       });
   }
@@ -248,7 +257,7 @@ function renderResponse(state: AppState, deps: ViewDeps): VNode {
           }),
         ),
       ]),
-      renderResponseBody(state),
+      renderResponseBody(state, deps),
     ],
   );
 }
@@ -322,29 +331,33 @@ function renderFooter(state: AppState): VNode {
     state.request.activeEnvironment.length > 0
       ? state.request.activeEnvironment.join(",")
       : "none";
-  const hints = describeBindings({
-    F5: "request.send",
-    tab: "pane.focusNext",
-    "ctrl+s": "file.save",
-    "ctrl+e": "env.switcher",
-    "ctrl+shift+p": "palette.commands",
-    F1: "help.show",
-    ...state.settings.keybindings,
+  const dirName = path.basename(state.workspaceRoot);
+  const branch = state.ui.gitBranch ?? "—";
+  const fileName = state.selectedFilePath
+    ? path.basename(state.selectedFilePath)
+    : null;
+
+  const hints = footerHints({
+    focusPane: state.ui.focusPane,
+    overlay: state.ui.overlay,
+    viewportWidth: state.ui.viewportWidth,
   });
 
   return ui.statusBar({
     id: "status-bar",
     left: [
-      ui.text(state.selectedFilePath ?? state.workspaceRoot),
+      ui.text(dirName, { style: { fg: rgb(180, 220, 255), bold: true } }),
+      ui.text(` ⎇ ${branch}`, { style: { fg: rgb(160, 220, 160) } }),
+      fileName ? ui.text(` | ${fileName}`) : null,
       state.dirty ? ui.text(" ●", { style: { fg: rgb(255, 180, 80) } }) : null,
-      ui.text(` env: ${env}`, { style: { fg: rgb(160, 200, 255) } }),
+      ui.text(` | env: ${env}`, { style: { fg: rgb(160, 200, 255) } }),
       state.ui.statusMessage ? ui.text(` | ${state.ui.statusMessage}`) : null,
     ].filter(Boolean) as VNode[],
-    right: [ui.text(hints.join("  "))],
+    right: [ui.text(hints)],
   });
 }
 
-function renderOverlay(state: AppState, deps: ViewDeps): VNode | null {
+function renderOverlayContent(state: AppState, deps: ViewDeps): VNode {
   switch (state.ui.overlay) {
     case "env":
       return ui.modal({
@@ -367,7 +380,7 @@ function renderOverlay(state: AppState, deps: ViewDeps): VNode | null {
             }),
           ),
         ]),
-        onClose: () => deps.onCommandPaletteSelect("overlay.close"),
+        onClose: deps.onOverlayClose,
         width: 50,
         height: 16,
       });
@@ -375,52 +388,66 @@ function renderOverlay(state: AppState, deps: ViewDeps): VNode | null {
       return ui.modal({
         id: "help-modal",
         title: "reqex help",
-        content: ui.column({ gap: 1 }, [
-          ui.text("F5 send · Tab cycle panes · Ctrl+S save · Ctrl+E env · Ctrl+Shift+P palette"),
-          ui.text("F1 help · F11 zoom · Ctrl+C twice quit"),
-        ]),
-        onClose: () => deps.onCommandPaletteSelect("overlay.close"),
+        content: ui.column({ gap: 1 }, HELP_HINT_LINES.map((line) => ui.text(line))),
+        onClose: deps.onOverlayClose,
         width: 70,
-        height: 12,
+        height: 14,
       });
     case "commandPalette":
-      return ui.commandPalette({
-        id: "command-palette",
-        open: true,
-        query: state.ui.commandPalette.query,
-        selectedIndex: state.ui.commandPalette.selectedIndex,
-        sources: [
-          {
-            id: "commands",
-            name: "Commands",
-            getItems: (query) =>
-              COMMAND_ITEMS.filter((item) =>
-                item.label.toLowerCase().includes(query.toLowerCase()),
-              ).map((item) => ({
-                id: item.id,
-                label: item.label,
-                description: item.description,
-                shortcut: item.shortcut,
-                sourceId: "commands",
-              })),
-          },
-        ],
-        onChange: deps.onCommandPaletteChange,
-        onSelect: (item) => deps.onCommandPaletteSelect(item.id),
-        onClose: () => deps.onCommandPaletteSelect("overlay.close"),
-        onSelectionChange: () => {},
-      });
+      return ui.center(
+        ui.commandPalette({
+          id: "command-palette",
+          open: true,
+          query: state.ui.commandPalette.query,
+          selectedIndex: state.ui.commandPalette.selectedIndex,
+          sources: [
+            {
+              id: "commands",
+              name: "Commands",
+              getItems: (query) =>
+                COMMAND_ITEMS.filter((item) =>
+                  item.label.toLowerCase().includes(query.toLowerCase()),
+                ).map((item) => ({
+                  id: item.id,
+                  label: item.label,
+                  description: item.description,
+                  shortcut: item.shortcut,
+                  sourceId: "commands",
+                })),
+            },
+          ],
+          onChange: deps.onCommandPaletteChange,
+          onSelect: (item) => deps.onCommandPaletteSelect(item.id),
+          onClose: deps.onOverlayClose,
+          onSelectionChange: deps.onCommandPaletteSelectionChange,
+          width: 60,
+        }),
+      );
     default:
-      return null;
+      return ui.text("");
   }
 }
 
 export function renderApp(state: AppState, deps: ViewDeps): VNode {
-  const overlay = renderOverlay(state, deps);
-  return ui.column({ gap: 1, flex: 1 }, [
+  const base = ui.column({ gap: 1, flex: 1 }, [
     renderMainLayout(state, deps),
     renderFooter(state),
-    overlay,
+  ]);
+
+  if (state.ui.overlay === "none") {
+    return base;
+  }
+
+  return ui.layers([
+    base,
+    ui.layer({
+      id: "overlay-layer",
+      modal: true,
+      backdrop: "dim",
+      closeOnEscape: true,
+      onClose: deps.onOverlayClose,
+      content: renderOverlayContent(state, deps),
+    }),
   ]);
 }
 

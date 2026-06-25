@@ -13,10 +13,10 @@ import type { AppState, FocusPane } from "./state/types.js";
 import { contentFromLines, resolveLayoutMode } from "./state/types.js";
 import { focusPaneId, renderApp } from "./ui/app-view.js";
 import { copyToClipboard, disableFlowControl } from "./utils/clipboard.js";
+import { getGitBranch } from "./utils/git.js";
 import { Workspace, flattenFiles } from "./workspace/index.js";
 
 async function main(): Promise<void> {
-  // Startup smoke: verify httpyac CJS import works under ESM.
   initEngineProviders();
 
   const workspaceRoot = path.resolve(process.argv[2] ?? process.cwd());
@@ -28,10 +28,22 @@ async function main(): Promise<void> {
     ...currentState,
     fileTree: tree,
     expandedPaths: tree.filter((n) => n.kind === "directory").map((n) => n.path),
+    ui: {
+      ...currentState.ui,
+      gitBranch: await getGitBranch(workspaceRoot),
+    },
   };
 
   let app: NodeApp<AppState> | null = null;
   let bus: CommandBus | null = null;
+
+  const refreshGitBranch = async () => {
+    const branch = await getGitBranch(workspaceRoot);
+    app?.update((prev) => ({
+      ...prev,
+      ui: { ...prev.ui, gitBranch: branch },
+    }));
+  };
 
   const reloadKeybindings = () => {
     if (!app || !bus) {
@@ -41,7 +53,7 @@ async function main(): Promise<void> {
     app.keys({
       ...buildBindingMap(loaded.bindings, (command) => {
         if (command === "response.copy") {
-          void handleCopy(currentState);
+          void handleCopy(app!, currentState);
         }
         bus!.execute(command);
       }),
@@ -51,12 +63,22 @@ async function main(): Promise<void> {
         description: "Apply selected environment",
       },
       up: {
-        handler: () => bus!.execute("env.selectPrev"),
-        when: (ctx) => ctx.state.ui.overlay === "env",
+        handler: () => {
+          if (currentState.ui.overlay === "env") {
+            bus!.execute("env.selectPrev");
+          }
+        },
+        when: (ctx) =>
+          ctx.state.ui.overlay === "env" || ctx.state.ui.overlay === "commandPalette",
       },
       down: {
-        handler: () => bus!.execute("env.selectNext"),
-        when: (ctx) => ctx.state.ui.overlay === "env",
+        handler: () => {
+          if (currentState.ui.overlay === "env") {
+            bus!.execute("env.selectNext");
+          }
+        },
+        when: (ctx) =>
+          ctx.state.ui.overlay === "env" || ctx.state.ui.overlay === "commandPalette",
       },
     });
     app.update((state) => ({
@@ -92,7 +114,8 @@ async function main(): Promise<void> {
   const stopWatch = watchKeybindings(workspaceRoot, reloadKeybindings);
 
   workspace.on("change", () => {
-    void bus.refreshWorkspace();
+    void bus!.refreshWorkspace();
+    void refreshGitBranch();
   });
 
   app.view((state) =>
@@ -112,7 +135,17 @@ async function main(): Promise<void> {
         });
       },
       onEditorSelection: (selection) => {
-        app?.update((prev) => ({ ...prev, editor: { ...prev.editor, selection } }));
+        app?.update((prev) => {
+          const cursorLine = selection?.active.line ?? prev.editor.cursor.line;
+          const activeRegion = prev.parsedFile
+            ? resolveRegionAtLine(prev.parsedFile.regions, cursorLine)
+            : null;
+          return {
+            ...prev,
+            activeRegion,
+            editor: { ...prev.editor, selection },
+          };
+        });
       },
       onEditorScroll: (scrollTop, scrollLeft) => {
         app?.update((prev) => ({
@@ -122,7 +155,7 @@ async function main(): Promise<void> {
       },
       onTreeSelect: (node) => {
         if (node.kind === "file") {
-          void bus.openFile(node.path);
+          void bus!.openFile(node.path);
         }
       },
       onTreeToggle: (node, expanded) => {
@@ -135,11 +168,21 @@ async function main(): Promise<void> {
       },
       onTreePress: (node) => {
         if (node.kind === "file") {
-          void bus.openFile(node.path);
+          void bus!.openFile(node.path);
         }
       },
       onResponseTab: (tab) => {
-        app?.update((prev) => ({ ...prev, ui: { ...prev.ui, responseTab: tab } }));
+        app?.update((prev) => ({
+          ...prev,
+          ui: { ...prev.ui, responseTab: tab },
+          responseEditor: { scrollTop: 0, scrollLeft: 0 },
+        }));
+      },
+      onResponseScroll: (scrollTop, scrollLeft) => {
+        app?.update((prev) => ({
+          ...prev,
+          responseEditor: { scrollTop, scrollLeft },
+        }));
       },
       onSplitChange: (sizes) => {
         if (sizes.length === 3) {
@@ -158,15 +201,24 @@ async function main(): Promise<void> {
           },
         }));
       },
+      onCommandPaletteSelectionChange: (index) => {
+        app?.update((prev) => ({
+          ...prev,
+          ui: {
+            ...prev.ui,
+            commandPalette: { ...prev.ui.commandPalette, selectedIndex: index },
+          },
+        }));
+      },
       onCommandPaletteSelect: (id) => {
+        bus?.execute("overlay.close");
         const command = commandFromPaletteId(id);
-        if (command) {
+        if (command && command !== "palette.commands") {
           bus?.execute(command);
-          return;
         }
-        if (id === "overlay.close") {
-          bus?.execute("overlay.close");
-        }
+      },
+      onOverlayClose: () => {
+        bus?.execute("overlay.close");
       },
       onEnvSelect: (index) => {
         app?.update((prev) => ({
@@ -194,7 +246,7 @@ async function main(): Promise<void> {
   stopWatch();
 }
 
-async function handleCopy(state: AppState): Promise<void> {
+async function handleCopy(app: NodeApp<AppState>, state: AppState): Promise<void> {
   const result = state.request.result;
   if (!result) {
     return;
@@ -206,8 +258,10 @@ async function handleCopy(state: AppState): Promise<void> {
     text = result.headers.map((h) => `${h.name}: ${h.value}`).join("\n");
   }
   const ok = await copyToClipboard(text);
-  // eslint-disable-next-line no-console
-  console.log(ok ? "Copied to clipboard" : "Copy failed");
+  app.update((prev) => ({
+    ...prev,
+    ui: { ...prev.ui, statusMessage: ok ? "Copied" : "Copy failed" },
+  }));
 }
 
 function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): void {

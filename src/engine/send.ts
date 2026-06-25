@@ -72,6 +72,9 @@ export async function sendRegion(options: {
     };
   }
 
+  delete httpRegion.response;
+  delete httpRegion.testResults;
+
   let capturedResponse: HttpResponse | undefined;
   const logResponse = async (response: HttpResponse | undefined) => {
     capturedResponse = response;
