@@ -1,6 +1,6 @@
 {
   "name": "@churivibhav/reqex",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Terminal HTTP client powered by httpyac and Rezi",
   "type": "module",
   "bin": {
