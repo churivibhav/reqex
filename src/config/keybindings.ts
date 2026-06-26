@@ -217,7 +217,7 @@ export type FooterHintItem = Readonly<{
 }>;
 
 const FOOTER_COMMANDS: Record<string, readonly CommandId[]> = {
-  editor: ["file.save", "env.switcher", "palette.commands"],
+  editor: ["file.save", "palette.commands"],
   response: ["response.copy", "response.jsonFoldToggle", "response.jsonUnfoldAll"],
   files: ["palette.files", "pane.focusNext", "palette.commands"],
   overlay: ["overlay.close"],

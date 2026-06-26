@@ -26,6 +26,24 @@ import { createSendController } from "./send-controller.js";
 import { prettyJsonIfPossible } from "../utils/http-syntax.js";
 import { buildFoldableJsonView, toggleJsonFoldAtLine } from "../utils/json-folding.js";
 
+export function envNameFromSelectedIndex(
+  environments: readonly string[],
+  selectedIndex: number,
+): string | undefined {
+  return selectedIndex === 0 ? undefined : environments[selectedIndex - 1];
+}
+
+export function envSelectedIndexFromActive(
+  environments: readonly string[],
+  activeEnvironment: readonly string[],
+): number {
+  if (activeEnvironment.length === 0) {
+    return 0;
+  }
+  const idx = environments.indexOf(activeEnvironment[0]!);
+  return idx === -1 ? 0 : idx + 1;
+}
+
 export function createCommandContext(deps: {
   workspace: Workspace;
   update: CommandContext["update"];
@@ -69,8 +87,10 @@ export function createCommandContext(deps: {
     const content = await deps.workspace.readFile(path);
     const lines = linesFromContent(content);
     const parsed = await parseFile(path, async () => content, deps.workspace.rootDir);
-    const environments = await listEnvironments(path);
-    const variables = await listVariables(path, [...deps.getState().request.activeEnvironment]);
+    const environments = await listEnvironments(path, deps.workspace.rootDir);
+    const variables = await listVariables(path, deps.workspace.rootDir, [
+      ...deps.getState().request.activeEnvironment,
+    ]);
     const initialLine = firstRequestLine(parsed.regions, lines) ?? 0;
 
     deps.update((state) => ({
@@ -194,9 +214,11 @@ export function createCommandContext(deps: {
       return;
     }
 
-    const variables = await listVariables(state.selectedFilePath, [
-      ...deps.getState().request.activeEnvironment,
-    ]);
+    const variables = await listVariables(
+      state.selectedFilePath,
+      deps.workspace.rootDir,
+      [...deps.getState().request.activeEnvironment],
+    );
 
     if (!sendController.isCurrent(gen)) {
       return;
@@ -274,9 +296,9 @@ export function createCommandContext(deps: {
           ui: {
             ...s.ui,
             overlay: s.ui.overlay === "env" ? "none" : "env",
-            envSelectedIndex: Math.max(
-              0,
-              s.request.environments.indexOf(s.request.activeEnvironment.join(",")) || 0,
+            envSelectedIndex: envSelectedIndexFromActive(
+              s.request.environments,
+              s.request.activeEnvironment,
             ),
           },
         }));
@@ -307,11 +329,14 @@ export function createCommandContext(deps: {
         }
         break;
       case "env.apply": {
-        const envName = state.request.environments[state.ui.envSelectedIndex];
+        const envName = envNameFromSelectedIndex(
+          state.request.environments,
+          state.ui.envSelectedIndex,
+        );
         void (async () => {
           const activeEnvironment = envName ? [envName] : [];
           const variables = state.selectedFilePath
-            ? await listVariables(state.selectedFilePath, activeEnvironment)
+            ? await listVariables(state.selectedFilePath, deps.workspace.rootDir, activeEnvironment)
             : {};
           deps.update((s) => ({
             ...s,

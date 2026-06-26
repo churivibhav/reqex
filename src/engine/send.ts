@@ -1,6 +1,7 @@
 import { getEnvironments, getVariables, send } from "httpyac";
 import type { HttpResponse } from "httpyac/dist/models/httpResponse.js";
 
+import { loadEnvironmentConfig } from "./env-config.js";
 import { getHttpFile, getHttpRegion } from "./store.js";
 import type { ExecResult, ResponseHeaderRow, TestResultDto } from "./types.js";
 
@@ -79,12 +80,14 @@ export async function sendRegion(options: {
   const logResponse = async (response: HttpResponse | undefined) => {
     capturedResponse = response;
   };
+  const config = await loadEnvironmentConfig(options.filePath, options.workingDir);
 
   try {
     await send({
       httpFile,
       httpRegion,
       activeEnvironment: options.activeEnvironment,
+      config,
       variables: options.variables,
       logResponse,
     });
@@ -111,21 +114,24 @@ export async function sendRegion(options: {
   }
 }
 
-export async function listEnvironments(filePath: string): Promise<string[]> {
+export async function listEnvironments(filePath: string, workingDir: string): Promise<string[]> {
   const httpFile = getHttpFile(filePath);
   if (!httpFile) {
     return [];
   }
-  return getEnvironments({ httpFile });
+  const config = await loadEnvironmentConfig(filePath, workingDir);
+  return getEnvironments({ httpFile, config });
 }
 
 export async function listVariables(
   filePath: string,
+  workingDir: string,
   activeEnvironment: string[] | undefined,
 ): Promise<Record<string, unknown>> {
   const httpFile = getHttpFile(filePath);
   if (!httpFile) {
     return {};
   }
-  return getVariables({ httpFile, activeEnvironment });
+  const config = await loadEnvironmentConfig(filePath, workingDir);
+  return getVariables({ httpFile, activeEnvironment, config });
 }

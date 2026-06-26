@@ -195,7 +195,7 @@ function renderResponseBody(state: AppState, deps: ViewDeps, colors: ThemeColors
     case "variables":
       return ui.codeEditor({
         id: `response-vars-${gen}`,
-        lines: [JSON.stringify(state.request.variables, null, 2)],
+        lines: JSON.stringify(state.request.variables, null, 2).split("\n"),
         readOnly: true,
         syntaxLanguage: "json",
         ...cursor,
@@ -384,7 +384,11 @@ function renderFooter(state: AppState, deps: ViewDeps, colors: ThemeColors): VNo
       ui.text(` ⎇ ${branch}`, { style: { fg: colors.success } }),
       fileName ? ui.text(` | ${fileName}`) : null,
       state.dirty ? ui.text(" ●", { style: { fg: colors.dirty } }) : null,
-      ui.text(` | env: ${env}`, { style: { fg: colors.info } }),
+      ui.button({
+        id: "status-env.switcher",
+        label: ` ^E env: ${env}`,
+        onPress: () => deps.onCommand("env.switcher"),
+      }),
       state.ui.statusMessage ? ui.text(` | ${state.ui.statusMessage}`) : null,
     ].filter(Boolean) as VNode[],
     right: hints.map((hint) =>
@@ -405,14 +409,20 @@ function renderOverlayContent(state: AppState, deps: ViewDeps, colors: ThemeColo
         title: "Environment",
         content: ui.column({ gap: 1 }, [
           ui.text("Select environment (Enter to apply, Esc to close)"),
-          ui.text("(none)", {
+          ui.button({
+            id: "env-option-none",
+            label: "(none)",
+            onPress: () => deps.onEnvSelect(0),
             style:
               state.ui.envSelectedIndex === 0
                 ? { fg: colors.selected, bold: true }
                 : undefined,
           }),
           ...state.request.environments.map((env, index) =>
-            ui.text(env, {
+            ui.button({
+              id: `env-option-${index}`,
+              label: env,
+              onPress: () => deps.onEnvSelect(index + 1),
               style:
                 index + 1 === state.ui.envSelectedIndex
                   ? { fg: colors.selected, bold: true }

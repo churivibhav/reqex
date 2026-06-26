@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { cli } from "httpyac";
 
-import { initEngineProviders, parseFile, resolveRegionAtLine, sendRegion } from "../src/engine/index.js";
+import {
+  initEngineProviders,
+  listEnvironments,
+  listVariables,
+  parseFile,
+  resolveRegionAtLine,
+  sendRegion,
+} from "../src/engine/index.js";
 import { createMockServer } from "./helpers/mock-server.js";
 
 test("resolveRegionAtLine picks innermost request region", async () => {
@@ -52,4 +60,37 @@ test("sendRegion executes against mock HTTP server", async () => {
   assert.match(result.body, /"ok"\s*:\s*true/u);
 
   await server.close();
+});
+
+test("listVariables reads http-client.env.json environments", async () => {
+  cli.initFileProvider();
+  initEngineProviders();
+
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "reqex-env-"));
+  try {
+    const filePath = path.join(workspaceRoot, "test.http");
+    const content = [
+      "@baseUrl = {{baseUrl}}",
+      "GET {{baseUrl}}/films/{{filmId}}",
+      "",
+    ].join("\n");
+    await writeFile(filePath, content, "utf8");
+    await writeFile(
+      path.join(workspaceRoot, "http-client.env.json"),
+      JSON.stringify({
+        dev: { baseUrl: "https://dev.example.test", filmId: "1" },
+        staging: { baseUrl: "https://staging.example.test", filmId: "2" },
+      }),
+      "utf8",
+    );
+
+    await parseFile(filePath, async () => content, workspaceRoot);
+
+    assert.deepEqual(await listEnvironments(filePath, workspaceRoot), ["dev", "staging"]);
+    const variables = await listVariables(filePath, workspaceRoot, ["dev"]);
+    assert.equal(variables.baseUrl, "https://dev.example.test");
+    assert.equal(variables.filmId, "1");
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
 });

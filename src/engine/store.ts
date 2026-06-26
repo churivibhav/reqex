@@ -1,6 +1,7 @@
 import { store as httpyacStoreModule } from "httpyac";
 import type { HttpFile, HttpRegion } from "httpyac/dist/models/index.js";
 
+import { loadEnvironmentConfig } from "./env-config.js";
 import type { ParsedFile, RequestRegion } from "./types.js";
 
 const store = new httpyacStoreModule.HttpFileStore();
@@ -36,7 +37,9 @@ export async function parseFile(
   version?: number,
 ): Promise<ParsedFile> {
   const parseVersion = version ?? getParseVersion(filePath);
+  const config = await loadEnvironmentConfig(filePath, workingDir);
   const httpFile = await store.getOrCreate(filePath, getText, parseVersion, {
+    config,
     workingDir,
   });
 

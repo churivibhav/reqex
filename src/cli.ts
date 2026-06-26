@@ -1,7 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 
-import type { UiEvent } from "@rezi-ui/core";
+import type { UiEvent, ZrevEvent } from "@rezi-ui/core";
 import { ZR_MOD_CTRL, ZR_MOD_SHIFT } from "@rezi-ui/core/keybindings";
 
 import { createNodeApp, type NodeApp } from "@rezi-ui/node";
@@ -21,11 +21,108 @@ import {
   sourceCursorFromEditor,
   sourceSelectionFromEditor,
   stripEditorLines,
+  prefixEditorLines,
 } from "./ui/editor-gutter.js";
+import { resolveWheelScroll } from "./ui/scroll.js";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.js";
 import { getGitBranch } from "./utils/git.js";
+import { prettyJsonIfPossible } from "./utils/http-syntax.js";
+import { buildFoldableJsonView } from "./utils/json-folding.js";
 import { resolveThemeMode } from "./utils/terminal-theme.js";
 import { Workspace, flattenFiles } from "./workspace/index.js";
+
+type ElementRect = Readonly<{ x: number; y: number; w: number; h: number }>;
+
+function isPointInRect(x: number, y: number, rect: ElementRect): boolean {
+  return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+function responseEditorId(state: AppState): string | null {
+  switch (state.ui.responseTab) {
+    case "pretty":
+      return `response-pretty-${state.resultGeneration}`;
+    case "raw":
+      return `response-raw-${state.resultGeneration}`;
+    case "variables":
+      return `response-vars-${state.resultGeneration}`;
+    case "headers":
+    case "tests":
+      return null;
+  }
+}
+
+function responseEditorLines(state: AppState): readonly string[] | null {
+  const result = state.request.result;
+  if (!result) {
+    return null;
+  }
+
+  switch (state.ui.responseTab) {
+    case "pretty":
+      return buildFoldableJsonView(
+        prettyJsonIfPossible(result.prettyBody || result.body),
+        state.responseEditor.foldedJsonPaths,
+      ).lines;
+    case "raw":
+      return result.body ? result.body.split("\n") : [""];
+    case "variables":
+      return JSON.stringify(state.request.variables, null, 2).split("\n");
+    case "headers":
+    case "tests":
+      return null;
+  }
+}
+
+function handleWheelEvent(event: ZrevEvent, app: NodeApp<AppState>): boolean {
+  if (event.kind !== "mouse" || event.mouseKind !== 5) {
+    return false;
+  }
+
+  let handled = false;
+  app.update((prev) => {
+    const editorRect = app.measureElement("editor");
+    if (editorRect && isPointInRect(event.x, event.y, editorRect)) {
+      handled = true;
+      const next = resolveWheelScroll(
+        event,
+        prev.editor,
+        prefixEditorLines(prev.fileLines, null),
+        { width: editorRect.w, height: editorRect.h },
+      );
+      return {
+        ...prev,
+        ui: { ...prev.ui, focusPane: "editor" },
+        editor: next
+          ? { ...prev.editor, scrollTop: next.scrollTop, scrollLeft: next.scrollLeft }
+          : prev.editor,
+      };
+    }
+
+    const id = responseEditorId(prev);
+    const responseRect = id ? app.measureElement(id) : null;
+    if (responseRect && isPointInRect(event.x, event.y, responseRect)) {
+      handled = true;
+      const lines = responseEditorLines(prev);
+      const next = lines
+        ? resolveWheelScroll(event, prev.responseEditor, lines, {
+            width: responseRect.w,
+            height: responseRect.h,
+          })
+        : null;
+      return {
+        ...prev,
+        ui: { ...prev.ui, focusPane: "response" },
+        responseEditor: next
+          ? { ...prev.responseEditor, scrollTop: next.scrollTop, scrollLeft: next.scrollLeft }
+          : prev.responseEditor,
+      };
+    }
+
+    return prev;
+  });
+
+  return handled;
+}
 
 async function main(): Promise<void> {
   initEngineProviders();
@@ -312,10 +409,14 @@ async function main(): Promise<void> {
         bus?.execute("overlay.close");
       },
       onEnvSelect: (index) => {
-        app?.update((prev) => ({
-          ...prev,
-          ui: { ...prev.ui, envSelectedIndex: index },
-        }));
+        app?.update((prev) => {
+          currentState = {
+            ...prev,
+            ui: { ...prev.ui, envSelectedIndex: index },
+          };
+          return currentState;
+        });
+        bus?.execute("env.apply");
       },
       onResponseSearch: (query) => {
         app?.update((prev) => ({
@@ -426,15 +527,16 @@ async function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): Promise<vo
     return;
   }
 
+  if (handleWheelEvent(event.event, app)) {
+    return;
+  }
+
   const { x, y, mouseKind, mods } = event.event;
   if (mouseKind === 3) {
     const editorRect = app.measureElement("editor");
     if (
       editorRect &&
-      x >= editorRect.x &&
-      x < editorRect.x + editorRect.w &&
-      y >= editorRect.y &&
-      y < editorRect.y + editorRect.h
+      isPointInRect(x, y, editorRect)
     ) {
       app.update((prev) => {
         const cursor = sourceCursorFromEditorPoint({
@@ -474,7 +576,7 @@ async function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): Promise<vo
     if (!rect) {
       continue;
     }
-    if (x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h) {
+    if (isPointInRect(x, y, rect)) {
       app.update((prev) => ({
         ...prev,
         ui: { ...prev.ui, focusPane: entry.pane },

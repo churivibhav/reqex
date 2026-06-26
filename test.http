@@ -5,12 +5,12 @@
 #   npx httpyac send test.http --all
 
 @baseUrl = https://swapi.info/api
-@filmId = 1
-@personId = 1
-@planetId = 1
-@speciesId = 1
-@vehicleId = 4
-@starshipId = 9
+@filmId = {{filmId}}
+@personId = {{personId}}
+@planetId = {{planetId}}
+@speciesId = {{speciesId}}
+@vehicleId = {{vehicleId}}
+@starshipId = {{starshipId}}
 
 ### API root — list resource endpoints
 GET {{baseUrl}}

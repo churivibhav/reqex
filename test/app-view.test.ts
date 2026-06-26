@@ -124,4 +124,111 @@ describe("renderApp", () => {
       "Ctrl+X Cancel",
     );
   });
+
+  it("renders clickable env label in status bar instead of footer hint", () => {
+    const state = createInitialState("/tmp/workspace");
+    const view = renderApp(
+      {
+        ...state,
+        request: {
+          ...state.request,
+          activeEnvironment: ["prod"],
+        },
+        settings: {
+          ...state.settings,
+          keybindings: {
+            F5: "request.send",
+            "ctrl+e": "env.switcher",
+            F1: "help.show",
+          },
+        },
+      },
+      noopDeps,
+    );
+
+    const envButton = statusButton(view, "status-env.switcher");
+    assert.ok(envButton);
+    assert.equal(envButton?.props?.label, " ^E env: prod");
+    assert.equal(typeof envButton?.props?.onPress, "function");
+    assert.equal(statusButton(view, "status-env.switcher"), envButton);
+    assert.equal(
+      collectNodes(view).some(
+        (node) => node.kind === "button" && node.props?.id === "status-env.switcher",
+      ),
+      true,
+    );
+    assert.equal(
+      collectNodes(view).some(
+        (node) =>
+          node.kind === "button" &&
+          node.props?.id === "status-env.switcher" &&
+          node.props?.label === " ^E env: none",
+      ),
+      false,
+    );
+  });
+
+  it("does not render env.switcher in right-side footer hints", () => {
+    const state = createInitialState("/tmp/workspace");
+    const view = renderApp(
+      {
+        ...state,
+        settings: {
+          ...state.settings,
+          keybindings: {
+            F5: "request.send",
+            "ctrl+e": "env.switcher",
+            "ctrl+s": "file.save",
+            F1: "help.show",
+          },
+        },
+      },
+      noopDeps,
+    );
+
+    assert.equal(statusButton(view, "status-env.switcher")?.props?.label, " ^E env: none");
+    assert.equal(statusButton(view, "status-file.save")?.props?.label, "Ctrl+S Save");
+    assert.equal(
+      collectNodes(view).some(
+        (node) => node.kind === "button" && node.props?.label === "Ctrl+E Env",
+      ),
+      false,
+    );
+  });
+
+  it("renders pressable environment modal options", () => {
+    let selectedIndex: number | null = null;
+    const deps: ViewDeps = {
+      ...noopDeps,
+      onEnvSelect: (index) => {
+        selectedIndex = index;
+      },
+    };
+    const state = createInitialState("/tmp/workspace");
+    const view = renderApp(
+      {
+        ...state,
+        ui: { ...state.ui, overlay: "env", envSelectedIndex: 2 },
+        request: {
+          ...state.request,
+          environments: ["dev", "prod"],
+        },
+      },
+      deps,
+    );
+
+    const none = statusButton(view, "env-option-none");
+    const dev = statusButton(view, "env-option-0");
+    const prod = statusButton(view, "env-option-1");
+
+    assert.equal(none?.props?.label, "(none)");
+    assert.equal(dev?.props?.label, "dev");
+    assert.equal(prod?.props?.label, "prod");
+    assert.equal(typeof none?.props?.onPress, "function");
+    assert.equal(typeof dev?.props?.onPress, "function");
+    assert.equal(typeof prod?.props?.onPress, "function");
+
+    (prod?.props?.onPress as () => void)();
+    assert.equal(selectedIndex, 2);
+  });
 });
