@@ -1,5 +1,11 @@
 export { initEngineProviders, setPromptHandler } from "./io-provider.js";
-export { resolveRegionAtLine, regionContainsLine, buildRegionDiagnostics } from "./region-resolver.js";
+export {
+  resolveRegionAtLine,
+  regionContainsLine,
+  resolveActiveRegion,
+  buildRegionDiagnostics,
+  firstRequestLine,
+} from "./region-resolver.js";
 export {
   bumpParseVersion,
   getParseVersion,

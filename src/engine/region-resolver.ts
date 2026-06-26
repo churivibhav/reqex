@@ -1,4 +1,4 @@
-import type { RequestRegion } from "./types.js";
+import type { ParsedFile, RequestRegion } from "./types.js";
 
 /** Resolve the innermost request region containing a 0-based editor line. */
 export function resolveRegionAtLine(
@@ -34,8 +34,38 @@ export function regionContainsLine(region: RequestRegion, line: number): boolean
   return line >= region.startLine && line <= region.endLine;
 }
 
+/** Active request region under the editor cursor. */
+export function resolveActiveRegion(
+  parsedFile: ParsedFile | null,
+  cursorLine: number,
+): RequestRegion | null {
+  if (!parsedFile) {
+    return null;
+  }
+  return resolveRegionAtLine(parsedFile.regions, cursorLine);
+}
+
 const HTTP_METHOD_PREFIX =
   /^\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|CONNECT|TRACE|GRAPHQL)\b/u;
+
+/** First HTTP method line in the file, for initial editor placement. */
+export function firstRequestLine(
+  regions: readonly RequestRegion[],
+  fileLines: readonly string[],
+): number | null {
+  const firstRegion = regions.find((region) => region.hasRequest && !region.isGlobal);
+  if (!firstRegion) {
+    return null;
+  }
+
+  for (let line = firstRegion.startLine; line <= firstRegion.endLine; line++) {
+    if (HTTP_METHOD_PREFIX.test(fileLines[line] ?? "")) {
+      return line;
+    }
+  }
+
+  return firstRegion.startLine;
+}
 
 function markerColumnAfterMethod(line: string): number {
   const match = HTTP_METHOD_PREFIX.exec(line);

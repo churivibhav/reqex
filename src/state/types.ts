@@ -1,8 +1,10 @@
 import type { CursorPosition, EditorSelection } from "@rezi-ui/core";
 
-import type { ExecResult, ParsedFile, RequestRegion } from "../engine/types.js";
+import type { ExecResult, ParsedFile } from "../engine/types.js";
 import type { WorkspaceFileNode } from "../workspace/types.js";
 
+export type ThemePreference = "auto" | "light" | "dark";
+export type ThemeMode = "light" | "dark";
 export type FocusPane = "files" | "editor" | "response";
 export type ResponseTab = "pretty" | "raw" | "headers" | "variables" | "tests";
 export type OverlayKind = "none" | "env" | "help" | "keybindings" | "commandPalette" | "filePicker";
@@ -18,12 +20,12 @@ export type AppState = Readonly<{
   dirty: boolean;
   parseVersion: number;
   parsedFile: ParsedFile | null;
-  activeRegion: RequestRegion | null;
   responseEditor: Readonly<{
     scrollTop: number;
     scrollLeft: number;
     cursor: CursorPosition;
     selection: EditorSelection | null;
+    foldedJsonPaths: readonly string[];
   }>;
   resultGeneration: number;
   editor: Readonly<{
@@ -70,6 +72,8 @@ export type AppState = Readonly<{
   settings: Readonly<{
     keymapPreset: "vscode" | "vim";
     keybindings: Readonly<Record<string, string>>;
+    theme: ThemePreference;
+    themeMode: ThemeMode;
   }>;
 }>;
 
@@ -109,6 +113,8 @@ export type CommandId =
   | "response.tab.prev"
   | "response.copy"
   | "response.search"
+  | "response.jsonFoldToggle"
+  | "response.jsonUnfoldAll"
   | "editor.searchNext";
 
 export const FOCUS_PANES: readonly FocusPane[] = ["files", "editor", "response"];
@@ -131,12 +137,12 @@ export function createInitialState(workspaceRoot: string): AppState {
     dirty: false,
     parseVersion: 0,
     parsedFile: null,
-    activeRegion: null,
     responseEditor: {
       scrollTop: 0,
       scrollLeft: 0,
       cursor: { line: 0, column: 0 },
       selection: null,
+      foldedJsonPaths: [],
     },
     resultGeneration: 0,
     editor: {
@@ -173,6 +179,8 @@ export function createInitialState(workspaceRoot: string): AppState {
     settings: {
       keymapPreset: "vscode",
       keybindings: {},
+      theme: "auto",
+      themeMode: "dark",
     },
   };
 }

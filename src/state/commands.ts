@@ -3,7 +3,8 @@ import {
   listEnvironments,
   listVariables,
   parseFile,
-  resolveRegionAtLine,
+  firstRequestLine,
+  resolveActiveRegion,
   sendRegion,
   setPromptHandler,
 } from "../engine/index.js";
@@ -22,6 +23,8 @@ import {
   type FocusPane,
 } from "./types.js";
 import { createSendController } from "./send-controller.js";
+import { prettyJsonIfPossible } from "../utils/http-syntax.js";
+import { buildFoldableJsonView, toggleJsonFoldAtLine } from "../utils/json-folding.js";
 
 export function createCommandContext(deps: {
   workspace: Workspace;
@@ -68,7 +71,7 @@ export function createCommandContext(deps: {
     const parsed = await parseFile(path, async () => content, deps.workspace.rootDir);
     const environments = await listEnvironments(path);
     const variables = await listVariables(path, [...deps.getState().request.activeEnvironment]);
-    const activeRegion = resolveRegionAtLine(parsed.regions, 0);
+    const initialLine = firstRequestLine(parsed.regions, lines) ?? 0;
 
     deps.update((state) => ({
       ...state,
@@ -78,12 +81,11 @@ export function createCommandContext(deps: {
       dirty: false,
       parseVersion: parsed.version,
       parsedFile: parsed,
-      activeRegion,
       editor: {
         ...state.editor,
-        cursor: { line: activeRegion?.startLine ?? 0, column: 0 },
+        cursor: { line: initialLine, column: 0 },
         selection: null,
-        scrollTop: activeRegion?.startLine ?? 0,
+        scrollTop: initialLine,
       },
       request: {
         ...state.request,
@@ -119,28 +121,40 @@ export function createCommandContext(deps: {
       deps.workspace.rootDir,
       version,
     );
-    const activeRegion = state.activeRegion
-      ? parsed.regions.find((region) => region.id === state.activeRegion?.id) ??
-        resolveRegionAtLine(parsed.regions, state.editor.cursor.line)
-      : resolveRegionAtLine(parsed.regions, state.editor.cursor.line);
-
     deps.update((s) => ({
       ...s,
       fileContent: content,
       dirty: false,
       parsedFile: parsed,
-      activeRegion: activeRegion ?? null,
       ui: { ...s.ui, statusMessage: "Saved" },
     }));
   };
 
   const runSend = async () => {
     const state = deps.getState();
-    if (!state.selectedFilePath || !state.parsedFile) {
+    if (!state.selectedFilePath) {
       return;
     }
 
-    const region = resolveRegionAtLine(state.parsedFile.regions, state.editor.cursor.line);
+    const cursorLine = state.editor.cursor.line;
+    const content = contentFromLines(state.fileLines);
+    let parsedFile = state.parsedFile;
+    if (!parsedFile || state.dirty) {
+      const version = bumpParseVersion(state.selectedFilePath);
+      parsedFile = await parseFile(
+        state.selectedFilePath,
+        async () => content,
+        deps.workspace.rootDir,
+        version,
+      );
+      deps.update((s) => ({
+        ...s,
+        parsedFile,
+        parseVersion: parsedFile!.version,
+      }));
+    }
+
+    const region = resolveActiveRegion(parsedFile, cursorLine);
     if (!region) {
       deps.update((s) => ({
         ...s,
@@ -154,13 +168,13 @@ export function createCommandContext(deps: {
 
     deps.update((s) => ({
       ...s,
-      activeRegion: region,
       request: { ...s.request, sending: true, error: null, result: null },
       responseEditor: {
         scrollTop: 0,
         scrollLeft: 0,
         cursor: { line: 0, column: 0 },
         selection: null,
+        foldedJsonPaths: [],
       },
       resultGeneration: s.resultGeneration + 1,
       ui: { ...s.ui, focusPane: "response", responseTab: "pretty" },
@@ -386,6 +400,46 @@ export function createCommandContext(deps: {
         deps.update((s) => ({
           ...s,
           ui: { ...s.ui, focusPane: "response", responseTab: "pretty" },
+        }));
+        break;
+      case "response.jsonFoldToggle": {
+        const result = state.request.result;
+        if (!result || state.ui.responseTab !== "pretty") {
+          break;
+        }
+        const text = prettyJsonIfPossible(result.prettyBody || result.body);
+        const foldedJsonPaths = toggleJsonFoldAtLine(
+          text,
+          state.responseEditor.foldedJsonPaths,
+          state.responseEditor.cursor.line,
+        );
+        if (foldedJsonPaths === state.responseEditor.foldedJsonPaths) {
+          deps.update((s) => ({
+            ...s,
+            ui: { ...s.ui, statusMessage: "No foldable JSON node" },
+          }));
+          break;
+        }
+        const visibleLineCount = buildFoldableJsonView(text, foldedJsonPaths).lines.length;
+        deps.update((s) => ({
+          ...s,
+          responseEditor: {
+            ...s.responseEditor,
+            foldedJsonPaths,
+            cursor: {
+              ...s.responseEditor.cursor,
+              line: Math.min(s.responseEditor.cursor.line, Math.max(0, visibleLineCount - 1)),
+            },
+          },
+          ui: { ...s.ui, focusPane: "response", statusMessage: "JSON fold toggled" },
+        }));
+        break;
+      }
+      case "response.jsonUnfoldAll":
+        deps.update((s) => ({
+          ...s,
+          responseEditor: { ...s.responseEditor, foldedJsonPaths: [] },
+          ui: { ...s.ui, focusPane: "response", statusMessage: "JSON unfolded" },
         }));
         break;
       case "editor.searchNext":

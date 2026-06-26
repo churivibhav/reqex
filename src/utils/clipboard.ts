@@ -12,12 +12,10 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function disableFlowControl(): void {
-  if (process.stdin.isTTY) {
-    try {
-      process.stdin.setRawMode?.(true);
-    } catch {
-      // ignore
-    }
+export async function readFromClipboard(): Promise<string | null> {
+  try {
+    return await clipboard.read();
+  } catch {
+    return null;
   }
 }

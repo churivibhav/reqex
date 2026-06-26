@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   buildRegionDiagnostics,
+  firstRequestLine,
   regionContainsLine,
+  resolveActiveRegion,
   resolveRegionAtLine,
 } from "../src/engine/region-resolver.js";
 import type { RequestRegion } from "../src/engine/types.js";
@@ -51,6 +53,29 @@ test("resolveRegionAtLine returns innermost region", () => {
 test("regionContainsLine", () => {
   assert.equal(regionContainsLine(regions[1]!, 5), true);
   assert.equal(regionContainsLine(regions[1]!, 10), false);
+});
+
+test("resolveActiveRegion follows cursor line", () => {
+  const parsed = {
+    path: "test.http",
+    version: 0,
+    regions,
+  };
+  assert.equal(resolveActiveRegion(parsed, 1)?.id, "a");
+  assert.equal(resolveActiveRegion(parsed, 6)?.id, "b");
+  assert.equal(resolveActiveRegion(parsed, 0), null);
+  assert.equal(resolveActiveRegion(null, 1), null);
+});
+
+test("firstRequestLine returns the HTTP method line", () => {
+  const lines = [
+    "",
+    "GET https://example.com/users",
+    "",
+    "",
+    "POST https://example.com/users",
+  ];
+  assert.equal(firstRequestLine(regions, lines), 1);
 });
 
 test("buildRegionDiagnostics uses narrow gutter markers only", () => {

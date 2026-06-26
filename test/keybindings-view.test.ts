@@ -46,6 +46,12 @@ describe("buildKeybindingsViewLines", () => {
     assert.ok(
       lines.some((line) => line.includes("Show keybindings") && line.includes("Ctrl+/")),
     );
+    assert.ok(
+      lines.some((line) => line.includes("Fold/unfold JSON node") && line.includes("Ctrl+[")),
+    );
+    assert.ok(lines.some((line) => line.includes("Unfold all JSON") && line.includes("Ctrl+]")));
+    assert.equal(bindings.F1, "help.show");
+    assert.equal(bindings["?"], undefined);
   });
 
   it("truncates when maxLines is exceeded", () => {

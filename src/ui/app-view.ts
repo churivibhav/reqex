@@ -1,20 +1,31 @@
 import path from "node:path";
 
 import {
-  rgb,
   ui,
   type CursorPosition,
   type EditorSelection,
   type VNode,
 } from "@rezi-ui/core";
 
-import { buildRegionDiagnostics, resolveRegionAtLine } from "../engine/index.js";
-import { buildKeybindingsViewLines, footerHints, HELP_HINT_LINES } from "../config/keybindings.js";
+import { resolveActiveRegion } from "../engine/index.js";
+import {
+  buildKeybindingsViewLines,
+  footerHintItems,
+  HELP_HINT_LINES,
+} from "../config/keybindings.js";
 import { COMMAND_ITEMS } from "../keymap/index.js";
 import type { AppState, CommandId, FocusPane } from "../state/types.js";
 import { contentFromLines, resolveLayoutMode } from "../state/types.js";
 import type { WorkspaceFileNode } from "../workspace/types.js";
-import { methodColor, prettyJsonIfPossible, statusTone, tokenizeHttpLine } from "../utils/http-syntax.js";
+import { colorsForMode, statusColorForTone, type ThemeColors } from "./theme-colors.js";
+import {
+  createRegionAwareTokenizer,
+  editorCursorFromSource,
+  editorSelectionFromSource,
+  prefixEditorLines,
+} from "./editor-gutter.js";
+import { methodColor, prettyJsonIfPossible, statusTone } from "../utils/http-syntax.js";
+import { buildFoldableJsonView } from "../utils/json-folding.js";
 
 export type ViewDeps = Readonly<{
   onEditorChange: (lines: readonly string[], cursor: CursorPosition) => void;
@@ -27,6 +38,8 @@ export type ViewDeps = Readonly<{
   onResponseScroll: (scrollTop: number, scrollLeft: number) => void;
   onResponseSelection: (selection: EditorSelection | null) => void;
   onResponseChange: (cursor: CursorPosition) => void;
+  onResponseJsonFoldToggle: () => void;
+  onResponseJsonUnfoldAll: () => void;
   onSplitChange: (sizes: readonly number[]) => void;
   onCommandPaletteChange: (query: string) => void;
   onCommandPaletteSelect: (id: string) => void;
@@ -34,18 +47,22 @@ export type ViewDeps = Readonly<{
   onOverlayClose: () => void;
   onEnvSelect: (index: number) => void;
   onResponseSearch: (query: string) => void;
+  onCommand: (command: CommandId) => void;
 }>;
 
-function paneStyle(focused: boolean): { fg?: ReturnType<typeof rgb>; bold?: boolean } {
-  return focused ? { fg: rgb(180, 220, 255), bold: true } : { fg: rgb(120, 120, 120) };
+function paneStyle(colors: ThemeColors, focused: boolean) {
+  return {
+    bg: colors.bgElevated,
+    ...(focused ? { fg: colors.paneFocused, bold: true } : { fg: colors.paneMuted }),
+  };
 }
 
-function renderFileTree(state: AppState, deps: ViewDeps): VNode {
+function renderFileTree(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   return ui.panel(
     {
       id: "pane-files",
       title: state.ui.focusPane === "files" ? "● Files" : "Files",
-      style: paneStyle(state.ui.focusPane === "files"),
+      style: paneStyle(colors, state.ui.focusPane === "files"),
     },
     [
       ui.tree({
@@ -63,9 +80,9 @@ function renderFileTree(state: AppState, deps: ViewDeps): VNode {
           ui.row({ gap: 1 }, [
             ui.text(nodeState.selected ? `▸ ${node.name}` : node.name, {
               style: nodeState.selected
-                ? { fg: rgb(255, 220, 120), bold: true }
+                ? { fg: colors.selected, bold: true }
                 : state.dirty && node.path === state.selectedFilePath
-                  ? { fg: rgb(255, 180, 80) }
+                  ? { fg: colors.dirty }
                   : undefined,
             }),
           ]),
@@ -76,12 +93,8 @@ function renderFileTree(state: AppState, deps: ViewDeps): VNode {
   );
 }
 
-function renderEditor(state: AppState, deps: ViewDeps, readOnly: boolean): VNode {
-  const activeRegion =
-    state.activeRegion ??
-    (state.parsedFile
-      ? resolveRegionAtLine(state.parsedFile.regions, state.editor.cursor.line)
-      : null);
+function renderEditor(state: AppState, deps: ViewDeps, readOnly: boolean, colors: ThemeColors): VNode {
+  const activeRegion = resolveActiveRegion(state.parsedFile, state.editor.cursor.line);
 
   const titleParts = [
     state.ui.focusPane === "editor" ? "● Editor" : "Editor",
@@ -90,33 +103,24 @@ function renderEditor(state: AppState, deps: ViewDeps, readOnly: boolean): VNode
     activeRegion ? ` | ${activeRegion.method ?? "?"} ${activeRegion.name}` : "",
   ];
 
-  const diagnostics = state.parsedFile
-    ? buildRegionDiagnostics(
-        state.parsedFile.regions,
-        activeRegion?.id ?? null,
-        state.fileLines,
-      )
-    : [];
-
   return ui.panel(
     {
       id: "pane-editor",
       title: titleParts.join(""),
-      style: paneStyle(state.ui.focusPane === "editor"),
+      style: paneStyle(colors, state.ui.focusPane === "editor"),
     },
     [
       ui.codeEditor({
         id: "editor",
-        lines: state.fileLines,
-        cursor: state.editor.cursor,
-        selection: state.editor.selection,
+        lines: prefixEditorLines(state.fileLines, activeRegion),
+        cursor: editorCursorFromSource(state.editor.cursor),
+        selection: editorSelectionFromSource(state.editor.selection),
         scrollTop: state.editor.scrollTop,
         scrollLeft: state.editor.scrollLeft,
         readOnly,
         lineNumbers: true,
         syntaxLanguage: "plain",
-        tokenizeLine: tokenizeHttpLine,
-        diagnostics,
+        tokenizeLine: createRegionAwareTokenizer(activeRegion),
         onChange: (lines, cursor) => deps.onEditorChange(lines, cursor),
         onSelectionChange: deps.onEditorSelection,
         onScroll: deps.onEditorScroll,
@@ -146,7 +150,7 @@ function responseCursorProps(state: AppState, deps: ViewDeps) {
   };
 }
 
-function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
+function renderResponseBody(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   const result = state.request.result;
   const scroll = responseScrollProps(state, deps);
   const cursor = responseCursorProps(state, deps);
@@ -205,19 +209,23 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
             style: {
               fg:
                 test.status === "SUCCESS"
-                  ? rgb(120, 220, 120)
+                  ? colors.success
                   : test.status === "SKIPPED"
-                    ? rgb(220, 220, 120)
-                    : rgb(220, 120, 120),
+                    ? colors.warning
+                    : colors.error,
             },
           }),
         ),
       ]);
     case "pretty":
-    default:
+    default: {
+      const prettyView = buildFoldableJsonView(
+        prettyJsonIfPossible(result.prettyBody || result.body),
+        state.responseEditor.foldedJsonPaths,
+      );
       return ui.codeEditor({
         id: `response-pretty-${gen}`,
-        lines: prettyJsonIfPossible(result.prettyBody || result.body).split("\n"),
+        lines: prettyView.lines,
         readOnly: true,
         lineNumbers: true,
         syntaxLanguage: "json",
@@ -226,10 +234,11 @@ function renderResponseBody(state: AppState, deps: ViewDeps): VNode {
         ...scroll,
         flex: 1,
       });
+    }
   }
 }
 
-function renderResponse(state: AppState, deps: ViewDeps): VNode {
+function renderResponse(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   const result = state.request.result;
   const statusLine =
     state.request.sending || !result
@@ -248,14 +257,17 @@ function renderResponse(state: AppState, deps: ViewDeps): VNode {
     {
       id: "pane-response",
       title: state.ui.focusPane === "response" ? "● Response" : "Response",
-      style: paneStyle(state.ui.focusPane === "response"),
+      style: paneStyle(colors, state.ui.focusPane === "response"),
     },
     [
       ui.row({ gap: 2 }, [
         state.request.sending
           ? ui.spinner({ label: "Sending request…" })
           : ui.text(statusLine ?? "Ready", {
-              style: { fg: rgb(...statusColor(result?.statusCode)), bold: true },
+              style: {
+                fg: statusColorForTone(colors, statusTone(result?.statusCode)),
+                bold: true,
+              },
             }),
         result?.error && !state.request.sending
           ? ui.badge(result.error, { variant: "error" })
@@ -270,54 +282,56 @@ function renderResponse(state: AppState, deps: ViewDeps): VNode {
             onPress: () => deps.onResponseTab(tab.key),
           }),
         ),
+        state.ui.responseTab === "pretty" && result
+          ? ui.button({
+              id: "response-json-fold",
+              label: "Fold/Unfold",
+              disabled: state.request.sending,
+              onPress: deps.onResponseJsonFoldToggle,
+            })
+          : null,
+        state.ui.responseTab === "pretty" && state.responseEditor.foldedJsonPaths.length > 0
+          ? ui.button({
+              id: "response-json-unfold-all",
+              label: "Unfold all",
+              disabled: state.request.sending,
+              onPress: deps.onResponseJsonUnfoldAll,
+            })
+          : null,
       ]),
-      renderResponseBody(state, deps),
+      renderResponseBody(state, deps, colors),
     ],
   );
 }
 
-function statusColor(code: number | undefined): [number, number, number] {
-  const tone = statusTone(code);
-  switch (tone) {
-    case "green":
-      return [120, 220, 140];
-    case "yellow":
-      return [240, 200, 100];
-    case "red":
-      return [240, 120, 120];
-    default:
-      return [140, 200, 240];
-  }
-}
-
-function renderMainLayout(state: AppState, deps: ViewDeps): VNode {
+function renderMainLayout(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   const layoutMode = resolveLayoutMode(state.ui.viewportWidth);
   const zoom = state.ui.zoomPane;
 
   if (zoom) {
-    if (zoom === "files") return renderFileTree(state, deps);
-    if (zoom === "editor") return renderEditor(state, deps, false);
-    return renderResponse(state, deps);
+    if (zoom === "files") return renderFileTree(state, deps, colors);
+    if (zoom === "editor") return renderEditor(state, deps, false, colors);
+    return renderResponse(state, deps, colors);
   }
 
   if (layoutMode === "stacked") {
     const pane =
       state.ui.focusPane === "files"
-        ? renderFileTree(state, deps)
+        ? renderFileTree(state, deps, colors)
         : state.ui.focusPane === "response"
-          ? renderResponse(state, deps)
-          : renderEditor(state, deps, false);
+          ? renderResponse(state, deps, colors)
+          : renderEditor(state, deps, false, colors);
     return pane;
   }
 
   if (layoutMode === "sidebar-overlay") {
     return ui.row({ gap: 1, flex: 1 }, [
       state.ui.sidebarVisible
-        ? ui.box({ width: 28, flex: 0 }, [renderFileTree(state, deps)])
+        ? ui.box({ width: 28, flex: 0 }, [renderFileTree(state, deps, colors)])
         : null,
       ui.column({ gap: 1, flex: 1 }, [
-        renderEditor(state, deps, false),
-        renderResponse(state, deps),
+        renderEditor(state, deps, false, colors),
+        renderResponse(state, deps, colors),
       ]),
     ]);
   }
@@ -332,15 +346,15 @@ function renderMainLayout(state: AppState, deps: ViewDeps): VNode {
         onChange: deps.onSplitChange,
       },
       [
-        renderFileTree(state, deps),
-        renderEditor(state, deps, false),
-        renderResponse(state, deps),
+        renderFileTree(state, deps, colors),
+        renderEditor(state, deps, false, colors),
+        renderResponse(state, deps, colors),
       ],
     ),
   ]);
 }
 
-function renderFooter(state: AppState): VNode {
+function renderFooter(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   const env =
     state.request.activeEnvironment.length > 0
       ? state.request.activeEnvironment.join(",")
@@ -351,28 +365,39 @@ function renderFooter(state: AppState): VNode {
     ? path.basename(state.selectedFilePath)
     : null;
 
-  const hints = footerHints({
+  const hints = footerHintItems({
     focusPane: state.ui.focusPane,
     overlay: state.ui.overlay,
     viewportWidth: state.ui.viewportWidth,
     sending: state.request.sending,
+    bindings: state.settings.keybindings,
+    responseTab: state.ui.responseTab,
+    hasResponse: Boolean(state.request.result),
+    hasFoldedJson: state.responseEditor.foldedJsonPaths.length > 0,
   });
 
   return ui.statusBar({
     id: "status-bar",
+    style: { bg: colors.bgSubtle, fg: colors.fgPrimary },
     left: [
-      ui.text(dirName, { style: { fg: rgb(180, 220, 255), bold: true } }),
-      ui.text(` ⎇ ${branch}`, { style: { fg: rgb(160, 220, 160) } }),
+      ui.text(dirName, { style: { fg: colors.paneFocused, bold: true } }),
+      ui.text(` ⎇ ${branch}`, { style: { fg: colors.success } }),
       fileName ? ui.text(` | ${fileName}`) : null,
-      state.dirty ? ui.text(" ●", { style: { fg: rgb(255, 180, 80) } }) : null,
-      ui.text(` | env: ${env}`, { style: { fg: rgb(160, 200, 255) } }),
+      state.dirty ? ui.text(" ●", { style: { fg: colors.dirty } }) : null,
+      ui.text(` | env: ${env}`, { style: { fg: colors.info } }),
       state.ui.statusMessage ? ui.text(` | ${state.ui.statusMessage}`) : null,
     ].filter(Boolean) as VNode[],
-    right: [ui.text(hints)],
+    right: hints.map((hint) =>
+      ui.button({
+        id: `status-${hint.command}`,
+        label: hint.label,
+        onPress: () => deps.onCommand(hint.command),
+      }),
+    ),
   });
 }
 
-function renderOverlayContent(state: AppState, deps: ViewDeps): VNode {
+function renderOverlayContent(state: AppState, deps: ViewDeps, colors: ThemeColors): VNode {
   switch (state.ui.overlay) {
     case "env":
       return ui.modal({
@@ -383,14 +408,14 @@ function renderOverlayContent(state: AppState, deps: ViewDeps): VNode {
           ui.text("(none)", {
             style:
               state.ui.envSelectedIndex === 0
-                ? { fg: rgb(255, 220, 120), bold: true }
+                ? { fg: colors.selected, bold: true }
                 : undefined,
           }),
           ...state.request.environments.map((env, index) =>
             ui.text(env, {
               style:
                 index + 1 === state.ui.envSelectedIndex
-                  ? { fg: rgb(255, 220, 120), bold: true }
+                  ? { fg: colors.selected, bold: true }
                   : undefined,
             }),
           ),
@@ -459,9 +484,10 @@ function renderOverlayContent(state: AppState, deps: ViewDeps): VNode {
 }
 
 export function renderApp(state: AppState, deps: ViewDeps): VNode {
-  const base = ui.column({ gap: 1, flex: 1 }, [
-    renderMainLayout(state, deps),
-    renderFooter(state),
+  const colors = colorsForMode(state.settings.themeMode);
+  const base = ui.column({ gap: 1, flex: 1, style: { bg: colors.bgBase } }, [
+    renderMainLayout(state, deps, colors),
+    renderFooter(state, deps, colors),
   ]);
 
   if (state.ui.overlay === "none") {
@@ -476,7 +502,7 @@ export function renderApp(state: AppState, deps: ViewDeps): VNode {
       backdrop: "dim",
       closeOnEscape: true,
       onClose: deps.onOverlayClose,
-      content: renderOverlayContent(state, deps),
+      content: renderOverlayContent(state, deps, colors),
     }),
   ]);
 }

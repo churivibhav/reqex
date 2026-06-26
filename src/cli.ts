@@ -1,18 +1,30 @@
 import path from "node:path";
 import process from "node:process";
 
-import { createNodeApp, type NodeApp } from "@rezi-ui/node";
 import type { UiEvent } from "@rezi-ui/core";
+import { ZR_MOD_CTRL, ZR_MOD_SHIFT } from "@rezi-ui/core/keybindings";
 
+import { createNodeApp, type NodeApp } from "@rezi-ui/node";
+
+import { loadConfig, watchConfig, type ThemePreference } from "./config/config.js";
 import { loadKeybindings, watchKeybindings } from "./config/keybindings.js";
-import { initEngineProviders, resolveRegionAtLine } from "./engine/index.js";
+import { initEngineProviders } from "./engine/index.js";
 import { buildBindingMap, commandFromPaletteId } from "./keymap/index.js";
 import { createCommandContext, createInitialState, type CommandBus } from "./state/commands.js";
-import type { AppState, FocusPane } from "./state/types.js";
+import { pasteIntoEditor } from "./state/editor-edit.js";
+import type { AppState, CommandId, FocusPane, ThemeMode } from "./state/types.js";
 import { contentFromLines, resolveLayoutMode } from "./state/types.js";
+import { themeForMode } from "./ui/theme-colors.js";
 import { focusPaneId, renderApp } from "./ui/app-view.js";
-import { copyToClipboard, disableFlowControl } from "./utils/clipboard.js";
+import {
+  sourceCursorFromEditorPoint,
+  sourceCursorFromEditor,
+  sourceSelectionFromEditor,
+  stripEditorLines,
+} from "./ui/editor-gutter.js";
+import { copyToClipboard, readFromClipboard } from "./utils/clipboard.js";
 import { getGitBranch } from "./utils/git.js";
+import { resolveThemeMode } from "./utils/terminal-theme.js";
 import { Workspace, flattenFiles } from "./workspace/index.js";
 
 async function main(): Promise<void> {
@@ -22,11 +34,19 @@ async function main(): Promise<void> {
   const workspace = new Workspace(workspaceRoot);
   const tree = await workspace.open();
 
+  const config = loadConfig(workspaceRoot);
+  const initialThemeMode = await resolveThemeMode(config.theme);
+
   let currentState = createInitialState(workspaceRoot);
   currentState = {
     ...currentState,
     fileTree: tree,
     expandedPaths: tree.filter((n) => n.kind === "directory").map((n) => n.path),
+    settings: {
+      ...currentState.settings,
+      theme: config.theme,
+      themeMode: initialThemeMode,
+    },
     ui: {
       ...currentState.ui,
       gitBranch: await getGitBranch(workspaceRoot),
@@ -50,19 +70,24 @@ async function main(): Promise<void> {
     }
     const loaded = loadKeybindings(workspaceRoot);
     app.keys({
-      ...buildBindingMap(loaded.bindings, (command) => {
+      ...buildBindingMap(loaded.bindings, (command, ctx) => {
+        currentState = ctx.state as AppState;
         if (command === "response.copy") {
           void handleCopy(app!, currentState);
         }
         bus!.execute(command);
       }),
       enter: {
-        handler: () => bus!.execute("env.apply"),
+        handler: (ctx) => {
+          currentState = ctx.state as AppState;
+          bus!.execute("env.apply");
+        },
         when: (ctx) => ctx.state.ui.overlay === "env",
         description: "Apply selected environment",
       },
       up: {
-        handler: () => {
+        handler: (ctx) => {
+          currentState = ctx.state as AppState;
           if (currentState.ui.overlay === "env") {
             bus!.execute("env.selectPrev");
           }
@@ -71,7 +96,8 @@ async function main(): Promise<void> {
           ctx.state.ui.overlay === "env" || ctx.state.ui.overlay === "commandPalette",
       },
       down: {
-        handler: () => {
+        handler: (ctx) => {
+          currentState = ctx.state as AppState;
           if (currentState.ui.overlay === "env") {
             bus!.execute("env.selectNext");
           }
@@ -83,10 +109,34 @@ async function main(): Promise<void> {
     app.update((state) => ({
       ...state,
       settings: {
+        ...state.settings,
         keymapPreset: loaded.preset,
         keybindings: loaded.bindings,
       },
     }));
+  };
+
+  const applyTheme = async (preference: ThemePreference) => {
+    if (!app) {
+      return;
+    }
+    const themeMode: ThemeMode = await resolveThemeMode(preference, {
+      allowProbe: false,
+      fallbackMode: currentState.settings.themeMode,
+    });
+    app.setTheme(themeForMode(themeMode));
+    app.update((state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        theme: preference,
+        themeMode,
+      },
+    }));
+  };
+
+  const reloadConfig = () => {
+    void applyTheme(loadConfig(workspaceRoot).theme);
   };
 
   bus = createCommandContext({
@@ -99,18 +149,30 @@ async function main(): Promise<void> {
       });
     },
     quit: () => {
-      void workspace.close().finally(() => {
-        app?.stop().finally(() => process.exit(0));
+      void workspace.close().finally(async () => {
+        await app?.stop();
+        await app?.dispose();
+        process.exit(0);
       });
     },
     reloadKeybindings,
   });
 
-  app = createNodeApp({ initialState: currentState });
+  app = createNodeApp({ initialState: currentState, theme: themeForMode(initialThemeMode) });
   reloadKeybindings();
-  disableFlowControl();
 
-  const stopWatch = watchKeybindings(workspaceRoot, reloadKeybindings);
+  const executeCommand = (command: CommandId) => {
+    if (!bus || !app) {
+      return;
+    }
+    if (command === "response.copy") {
+      void handleCopy(app, currentState);
+    }
+    bus.execute(command);
+  };
+
+  const stopKeybindingWatch = watchKeybindings(workspaceRoot, reloadKeybindings);
+  const stopConfigWatch = watchConfig(workspaceRoot, reloadConfig);
 
   workspace.on("change", () => {
     void bus!.refreshWorkspace();
@@ -121,33 +183,27 @@ async function main(): Promise<void> {
     renderApp(state, {
       onEditorChange: (lines, cursor) => {
         app?.update((prev) => {
-          const activeRegion = prev.parsedFile
-            ? resolveRegionAtLine(prev.parsedFile.regions, cursor.line)
-            : null;
+          const fileLines = stripEditorLines(lines);
+          const sourceCursor = sourceCursorFromEditor(cursor);
           return {
             ...prev,
-            fileLines: [...lines],
-            dirty: contentFromLines(lines) !== prev.fileContent,
-            activeRegion,
+            fileLines,
+            dirty: contentFromLines(fileLines) !== prev.fileContent,
             ui: { ...prev.ui, focusPane: "editor" },
-            editor: { ...prev.editor, cursor },
+            editor: { ...prev.editor, cursor: sourceCursor },
           };
         });
       },
       onEditorSelection: (selection) => {
         app?.update((prev) => {
-          const cursorLine = selection?.active.line ?? prev.editor.cursor.line;
-          const activeRegion = prev.parsedFile
-            ? resolveRegionAtLine(prev.parsedFile.regions, cursorLine)
-            : null;
+          const sourceSelection = sourceSelectionFromEditor(selection);
           return {
             ...prev,
-            activeRegion,
             ui: { ...prev.ui, focusPane: "editor" },
             editor: {
               ...prev.editor,
-              selection,
-              cursor: selection?.active ?? prev.editor.cursor,
+              selection: sourceSelection,
+              cursor: sourceSelection?.active ?? prev.editor.cursor,
             },
           };
         });
@@ -213,6 +269,12 @@ async function main(): Promise<void> {
           responseEditor: { ...prev.responseEditor, cursor },
         }));
       },
+      onResponseJsonFoldToggle: () => {
+        bus?.execute("response.jsonFoldToggle");
+      },
+      onResponseJsonUnfoldAll: () => {
+        bus?.execute("response.jsonUnfoldAll");
+      },
       onSplitChange: (sizes) => {
         if (sizes.length === 3) {
           app?.update((prev) => ({
@@ -261,10 +323,13 @@ async function main(): Promise<void> {
           editor: { ...prev.editor, searchQuery: query },
         }));
       },
+      onCommand: executeCommand,
     }),
   );
 
-  app.onEvent((event) => handleUiEvent(event, app!));
+  app.onEvent((event) => {
+    void handleUiEvent(event, app!);
+  });
 
   const files = flattenFiles(tree).filter((node) => node.kind === "file");
   if (files[0]) {
@@ -272,7 +337,8 @@ async function main(): Promise<void> {
   }
 
   await app.run();
-  stopWatch();
+  stopKeybindingWatch();
+  stopConfigWatch();
 }
 
 async function handleCopy(app: NodeApp<AppState>, state: AppState): Promise<void> {
@@ -293,7 +359,40 @@ async function handleCopy(app: NodeApp<AppState>, state: AppState): Promise<void
   }));
 }
 
-function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): void {
+async function handlePaste(app: NodeApp<AppState>): Promise<void> {
+  const text = await readFromClipboard();
+  app.update((prev) => {
+    if (prev.ui.overlay !== "none" || prev.ui.focusPane !== "editor") {
+      return prev;
+    }
+    if (!text) {
+      return {
+        ...prev,
+        ui: { ...prev.ui, statusMessage: text === "" ? "Clipboard empty" : "Paste failed" },
+      };
+    }
+
+    const next = pasteIntoEditor({
+      lines: prev.fileLines,
+      cursor: prev.editor.cursor,
+      selection: prev.editor.selection,
+      text,
+    });
+    return {
+      ...prev,
+      fileLines: next.lines,
+      dirty: contentFromLines(next.lines) !== prev.fileContent,
+      editor: {
+        ...prev.editor,
+        cursor: next.cursor,
+        selection: next.selection,
+      },
+      ui: { ...prev.ui, focusPane: "editor", statusMessage: "Pasted" },
+    };
+  });
+}
+
+async function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): Promise<void> {
   if (event.kind === "engine" && event.event.kind === "resize") {
     const resize = event.event;
     app.update((prev) => ({
@@ -312,11 +411,58 @@ function handleUiEvent(event: UiEvent, app: NodeApp<AppState>): void {
     return;
   }
 
+  if (
+    event.kind === "engine" &&
+    event.event.kind === "key" &&
+    event.event.action === "down" &&
+    (event.event.mods & ZR_MOD_CTRL) !== 0 &&
+    event.event.key === 86
+  ) {
+    await handlePaste(app);
+    return;
+  }
+
   if (event.kind !== "engine" || event.event.kind !== "mouse") {
     return;
   }
 
-  const { x, y } = event.event;
+  const { x, y, mouseKind, mods } = event.event;
+  if (mouseKind === 3) {
+    const editorRect = app.measureElement("editor");
+    if (
+      editorRect &&
+      x >= editorRect.x &&
+      x < editorRect.x + editorRect.w &&
+      y >= editorRect.y &&
+      y < editorRect.y + editorRect.h
+    ) {
+      app.update((prev) => {
+        const cursor = sourceCursorFromEditorPoint({
+          x,
+          y,
+          rect: editorRect,
+          lines: prev.fileLines,
+          scrollTop: prev.editor.scrollTop,
+          scrollLeft: prev.editor.scrollLeft,
+        });
+        if (!cursor) {
+          return prev;
+        }
+        const extendSelection = (mods & ZR_MOD_SHIFT) !== 0;
+        return {
+          ...prev,
+          ui: { ...prev.ui, focusPane: "editor" },
+          editor: {
+            ...prev.editor,
+            cursor,
+            selection: extendSelection ? { anchor: prev.editor.cursor, active: cursor } : null,
+          },
+        };
+      });
+      return;
+    }
+  }
+
   const panes: Array<{ id: string; pane: FocusPane }> = [
     { id: "pane-files", pane: "files" },
     { id: "pane-editor", pane: "editor" },

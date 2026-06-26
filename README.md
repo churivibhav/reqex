@@ -40,7 +40,7 @@ reqex opens a three-pane layout:
 
 Use **Tab** / **Shift+Tab** to move between panes, or **Ctrl+1**, **Ctrl+2**, **Ctrl+3** to jump directly. Press **F11** or **z** to zoom the focused pane.
 
-Press **F1** or **?** anytime for in-app quick help. Press **Ctrl+/** for the full keybinding list.
+Press **F1** anytime for in-app quick help. Press **Ctrl+/** for the full keybinding list.
 
 ## HTTP files
 
@@ -91,7 +91,7 @@ After a request completes, the response pane shows several tabs:
 | **Variables** | Variables set by the request |
 | **Tests** | Test assertion results |
 
-Use **Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle tabs, or click a tab header. Copy the visible tab with **Ctrl+Shift+C**.
+Use **Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle tabs, or click a tab header. Copy the visible tab with **Ctrl+Shift+C**. In the Pretty tab, use **Ctrl+[** to fold or unfold the JSON node under the cursor and **Ctrl+]** to unfold everything.
 
 ## Environments
 
@@ -125,6 +125,27 @@ Example — remap send to **Ctrl+Return** only and use the vim pane preset:
 
 Changes are picked up automatically while reqex is running.
 
+### Theme
+
+reqex supports light and dark themes. By default it auto-detects your terminal background (via OSC 11) and picks a matching theme.
+
+Configure in:
+
+- **User config:** `~/.config/reqex/config.json` (Linux), `~/Library/Application Support/reqex/config.json` (macOS), or `%APPDATA%\reqex\config.json` (Windows)
+- **Project config:** `.reqex/config.json` in your workspace (overrides user settings)
+
+Set `REQEX_THEME` to override both files (`auto`, `light`, or `dark`).
+
+Example — force light theme:
+
+```json
+{
+  "theme": "light"
+}
+```
+
+Changes are picked up automatically while reqex is running.
+
 ### Common shortcuts
 
 | Key | Action |
@@ -139,9 +160,11 @@ Changes are picked up automatically while reqex is running.
 | `Ctrl+Shift+P` / `F2` | Command palette |
 | `Ctrl+Shift+C` | Copy response tab |
 | `Ctrl+F` | Search in response |
+| `Ctrl+[` | Fold/unfold JSON node in Pretty response |
+| `Ctrl+]` | Unfold all Pretty response JSON |
 | `Tab` / `Shift+Tab` | Cycle panes |
 | `Ctrl+1/2/3` | Jump to Files / Editor / Response |
-| `F1` / `?` | Quick help |
+| `F1` | Quick help |
 | `Ctrl+/` | Full keybindings list |
 | `F11` / `z` | Zoom pane |
 | `Ctrl+Q` | Quit |
